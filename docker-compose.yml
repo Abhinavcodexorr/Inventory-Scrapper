@@ -1,0 +1,32 @@
+# Local dev dependencies: Postgres + Redis.
+#
+# Every port here is bound to 127.0.0.1 ON PURPOSE. A bare "5433:5432" binds
+# 0.0.0.0, and Docker publishes ports by writing its own iptables rules that
+# BYPASS ufw — so on a public host an enabled firewall does not protect these,
+# and the credentials below are dev defaults. This file was written for local
+# runs but has been deployed to a public droplet at least once, which put an
+# unauthenticated Redis and a scraper/scraper Postgres on the open internet.
+# Keep the 127.0.0.1 prefix. Reach these from another host over an SSH tunnel.
+services:
+  postgres:
+    image: postgres:16
+    # Without this the container stays down after a host reboot, and the API
+    # comes back to a database that is not there.
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scraper
+      POSTGRES_PASSWORD: scraper
+      POSTGRES_DB: dealer_inventory
+    ports:
+      - "127.0.0.1:5433:5432"   # host 5433 -> container 5432, avoids a local Postgres on 5432
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+
+volumes:
+  pgdata:

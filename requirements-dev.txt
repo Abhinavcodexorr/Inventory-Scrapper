@@ -1,0 +1,7 @@
+# Test-only dependencies. Not needed in production — keep requirements.txt clean.
+#
+# Install:  pip install -r requirements.txt -r requirements-dev.txt
+# Run:      pytest -q               (offline tests only)
+#           pytest -q --live        (also runs tests needing a real browser/network)
+pytest==8.3.4
+pytest-timeout==2.3.1

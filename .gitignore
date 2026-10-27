@@ -1,0 +1,39 @@
+# --- Commercial / internal documents — never commit or share with the dev team ---
+_INTERNAL_DO_NOT_SHARE/
+*.xlsx
+*.docx
+
+# --- Secrets ---
+.env
+*.pem
+*.key
+
+# --- Python ---
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# --- Local databases & artifacts ---
+*.db
+*.db-journal
+DB
+scrape_debug.png
+benchmark_results.jsonl
+
+# --- Test tooling ---
+.pytest_cache/
+
+# --- Node / frontend ---
+node_modules/
+frontend/dist/
+frontend/.env
+
+# --- OS ---
+.DS_Store
+local_data/
+
+# --- Extra local-only files ---
+.venv*/
+.env.*.bak
+*.bak

@@ -1,0 +1,11 @@
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "live: needs real network access or a real browser (run with pytest --live)",
+    "db: needs a disposable database",
+]
+addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

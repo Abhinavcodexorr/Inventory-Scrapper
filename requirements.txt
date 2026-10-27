@@ -1,0 +1,21 @@
+SQLAlchemy==2.0.36
+alembic==1.14.0
+psycopg[binary]==3.2.3
+httpx==0.28.1
+playwright==1.49.1   # browser-mode adapter (JS-rendered / bot-protected sites); run: playwright install chromium
+defusedxml==0.7.1    # hardened XML parsing for untrusted sitemap.xml responses (discovery)
+pydantic==2.10.4
+pydantic-settings==2.7.0
+bcrypt==4.2.1        # operator password hashing (api/auth.py); session cookies use stdlib hmac
+tenacity==9.0.0
+
+# API layer
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# Task queue (Celery fan-out — HANDOFF Task 3)
+celery==5.4.0
+redis==5.2.1
+
+# AWS S3 image storage (HANDOFF Task 2)
+boto3==1.35.90

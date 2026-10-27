@@ -1,0 +1,168 @@
+"""Anti-bot / WAF detection: classify a page as blocked using response
+status/headers AND body content, with known-vendor fingerprints (Cloudflare,
+Akamai, PerimeterX/HUMAN, DataDome, Imperva/Incapsula) — not just a handful of
+English-only substring checks against body text alone with status/headers
+never inspected (the pre-refactor approach).
+
+Also provides a small retry ladder of browser profiles (UA/viewport/locale)
+the coordinator can escalate through after a detected block — a fresh
+identity is often enough to clear a soft challenge, though a hard block
+(CAPTCHA gate, IP reputation) needs real custom work regardless.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+from ..heuristics import DEFAULT_HEURISTICS, HeuristicsConfig
+
+# Header name -> vendor label. Presence alone is ambiguous (many of these
+# headers appear on every response from a protected site, blocked or not) —
+# real decisiveness comes from combining this with a body-pattern match or a
+# blocked status code (see classify()).
+_VENDOR_HEADERS: dict[str, str] = {
+    "cf-mitigated": "cloudflare", "cf-ray": "cloudflare",
+    "x-akamai-transformed": "akamai", "akamaighost": "akamai",
+    "x-px-block-reason": "perimeterx", "x-px-uuid": "perimeterx",
+    "x-datadome": "datadome",
+    "x-iinfo": "incapsula",
+}
+_BLOCKED_STATUS = {403, 429, 503}
+
+_VENDOR_BODY_PATTERNS: dict[str, re.Pattern] = {
+    "cloudflare": re.compile(
+        r"checking your browser|cf-browser-verification|just a moment|"
+        r"attention required.{0,60}cloudflare|un instant|v[ée]rification en cours", re.I),
+    "akamai": re.compile(r"access denied.{0,60}reference #|akamai", re.I),
+    "perimeterx": re.compile(r"press (&|and) hold|human ?challenge|_px", re.I),
+    "datadome": re.compile(r"datadome", re.I),
+    "incapsula": re.compile(r"incapsula|imperva", re.I),
+    "generic_captcha": re.compile(
+        r"captcha|recaptcha|hcaptcha|verify you are human|"
+        r"enable javascript and cookies|request blocked", re.I),
+}
+
+
+@dataclass
+class AntiBotVerdict:
+    blocked: bool
+    vendor: str | None = None
+    reasons: list[str] = field(default_factory=list)
+    status_code: int | None = None
+
+
+def classify(
+    *, status_code: int | None = None, headers: dict | None = None, body_text: str = "",
+    heuristics: HeuristicsConfig = DEFAULT_HEURISTICS,
+) -> AntiBotVerdict:
+    """Decide whether a page load hit an anti-bot wall. Combines three
+    independent signals so a single ambiguous header can't trip a false
+    positive: vendor response headers, vendor/generic body-text patterns, and
+    a blocked-looking status code."""
+    headers = {k.lower(): v for k, v in (headers or {}).items()}
+    reasons: list[str] = []
+    vendor_hits: dict[str, int] = {}
+
+    for header_name, vendor in _VENDOR_HEADERS.items():
+        if header_name in headers:
+            vendor_hits[vendor] = vendor_hits.get(vendor, 0) + 1
+            reasons.append(f"header '{header_name}' present ({vendor})")
+
+    body_head = (body_text or "")[:2000].lower()
+    for vendor, pattern in _VENDOR_BODY_PATTERNS.items():
+        if pattern.search(body_head):
+            vendor_hits[vendor] = vendor_hits.get(vendor, 0) + 2  # body match is stronger evidence
+            reasons.append(f"body matched {vendor} challenge pattern")
+
+    # Legacy plain-phrase checks, kept as a final fallback for an
+    # unrecognised vendor (still counts as a "generic" hit, not a vendor one).
+    for phrase in heuristics.antibot_phrases:
+        if phrase in body_head:
+            vendor_hits["generic"] = vendor_hits.get("generic", 0) + 1
+            reasons.append(f"body contains '{phrase}'")
+
+    status_flag = status_code in _BLOCKED_STATUS
+    if status_flag:
+        reasons.append(f"status code {status_code}")
+
+    if not vendor_hits and not status_flag:
+        return AntiBotVerdict(blocked=False, status_code=status_code)
+
+    best_vendor = max(vendor_hits, key=vendor_hits.get) if vendor_hits else None
+
+    # Separate decisiveness rules for generic_captcha vs. real vendors:
+    # - Real vendors are decisive if body-matched (weight >= 2) alone
+    # - generic_captcha requires co-occurrence with a blocked status or vendor header
+    #   (fixes false positive where footer reCAPTCHA notices block healthy dealers)
+    has_vendor_header = any(vendor in vendor_hits for vendor in _VENDOR_HEADERS.values())
+    real_vendor_hit = any(w >= 2 for vendor, w in vendor_hits.items() if vendor != "generic_captcha")
+    generic_captcha_hit = vendor_hits.get("generic_captcha", 0)
+
+    # Weight from NAMED vendors only. Counting the generic buckets here was what
+    # kept the reCAPTCHA false positive alive: a privacy-footer notice scores 2
+    # for the generic_captcha pattern plus 1 for the legacy "captcha" phrase,
+    # reaching the old `sum(...) >= 3` shortcut on a perfectly healthy 200 page.
+    real_vendor_weight = sum(
+        w for v, w in vendor_hits.items() if v not in ("generic", "generic_captcha")
+    )
+    # Distinct challenge phrases. One mention of "captcha" is a footer notice;
+    # several different phrases ("checking your browser", "verify you are human",
+    # "enable javascript and cookies") is an actual interstitial.
+    generic_phrase_hits = vendor_hits.get("generic", 0)
+
+    decisive = (
+        real_vendor_hit
+        # A refusal status is decisive on its own. Requiring a vendor fingerprint
+        # alongside it meant an unbranded block went unreported: driftmotors.ca
+        # answers every request with a plain nginx/CloudFront 403 and no vendor
+        # name, so discovery walked six candidate URLs that were all 403s, found
+        # no vehicles, and concluded the LAYOUT was unsupported — "quote custom
+        # scraper" for a site that is simply refusing us. Being unable to load a
+        # dealer's homepage at all is not an ambiguous signal.
+        or status_flag
+        or real_vendor_weight >= 3
+        or generic_phrase_hits >= 2
+        or (generic_captcha_hit >= 2 and has_vendor_header)
+    )
+    return AntiBotVerdict(blocked=decisive, vendor=best_vendor if decisive else None,
+                           reasons=reasons, status_code=status_code)
+
+
+@dataclass(frozen=True)
+class RetryProfile:
+    label: str
+    user_agent: str
+    viewport: dict
+    locale: str = "en-US"
+    timezone_id: str = "America/Toronto"
+
+
+# Escalating identities to retry a blocked page under. Order matters: the
+# first is what discovery already used everywhere (no behavior change for the
+# common case); later profiles are only ever tried after a detected block.
+RETRY_LADDER: tuple[RetryProfile, ...] = (
+    RetryProfile(
+        "chrome-mac",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        {"width": 1440, "height": 900},
+    ),
+    RetryProfile(
+        "chrome-windows",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        {"width": 1920, "height": 1080},
+    ),
+    RetryProfile(
+        "safari-mac",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+        "(KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+        {"width": 1440, "height": 900},
+    ),
+)
+
+
+def profile_for_attempt(attempt: int) -> RetryProfile:
+    """attempt 0 = the default profile discovery always used; each further
+    attempt escalates to the next profile, clamped to the last one."""
+    return RETRY_LADDER[min(max(attempt, 0), len(RETRY_LADDER) - 1)]

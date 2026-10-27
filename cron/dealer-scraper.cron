@@ -1,0 +1,11 @@
+# Daily dealer scrape — runs once a day at 03:15 (server local time).
+# Install with:  crontab cron/dealer-scraper.cron
+# Adjust the path to where you deployed the project and its virtualenv.
+#
+# Logs go to /var/log/dealer-scraper.log ; exit code is non-zero if any dealer
+# run failed or came back INCOMPLETE, so a monitoring wrapper can alert.
+
+15 3 * * *  cd /opt/dealer-scraper && /opt/dealer-scraper/.venv/bin/python -m dealer_scraper.run_daily >> /var/log/dealer-scraper.log 2>&1
+
+# --- Alternative: systemd timer (preferred on modern hosts) ---
+# See README section "Scheduling" for dealer-scraper.service + dealer-scraper.timer units.
