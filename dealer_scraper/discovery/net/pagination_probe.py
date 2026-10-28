@@ -11,6 +11,7 @@ from urllib.parse import parse_qsl, quote, urlparse, urlsplit, urlunsplit
 import httpx
 
 from ...adapters.json_api import _dig
+from ...config import settings
 from ..heuristics import DEFAULT_HEURISTICS, HeuristicsConfig
 from .fieldmap import _flatten
 from .safe_http import safe_client
@@ -85,11 +86,20 @@ def _detect_pagination(urls: list[str], heuristics: HeuristicsConfig = DEFAULT_H
         (k for k in other_q if k != key and heuristics.size_param_re.match(k) and _numeric(other_q[k]) is not None),
         None,
     )
+    # The two calls diffed above are not necessarily the first page: clutch.ca
+    # fetches page=0 on load and page=1, 2 on scroll, and starting at 1 skipped
+    # its first 32 vehicles on every sync. Start at the lowest page any observed
+    # call asked for, when it sits on the same step grid.
+    start, step = min(v1, v2), abs(v2 - v1)
+    for u in urls:
+        v = _numeric(dict(parse_qsl(urlparse(u).query)).get(key))
+        if v is not None and 0 <= v < start and (start - v) % step == 0:
+            start = v
     return {
         "template_url": template_url,
         "param": key,
-        "start": min(v1, v2),
-        "step": abs(v2 - v1),
+        "start": start,
+        "step": step,
         "size_param": size_param,
         "size_value": _numeric(other_q.get(size_param)) if size_param else None,
     }
@@ -132,11 +142,19 @@ def _probe_pagination_via_http(url: str, list_path: str, first_array: list,
     if not first_array:
         return None
     first_key = json.dumps(first_array[0], sort_keys=True, default=str)
-    headers = {"Accept": "application/json",
-               "User-Agent": "InventoryBot/1.0 (+contact@brainspack.com) discovery-probe"}
+    # The UA the json_api adapter will send at sync time. A probe that
+    # identifies differently proves nothing about the sync: clutch.ca's WAF
+    # refuses "InventoryBot" with a 403 and serves a Chrome UA normally.
+    headers = {"Accept": "application/json", "User-Agent": settings.scraper_user_agent}
     headers.update(extra_headers or {})
+    observed = dict(parse_qsl(urlsplit(url).query))
     for param in heuristics.page_param_candidates:
-        trial_url = _with_query_param(url, param, "2")
+        # When the observed call already names its page (clutch.ca sends
+        # page=0), ask for the next one and start where the site started —
+        # guessing page=2 / start 1 there would skip the whole first page.
+        current = _numeric(observed.get(param))
+        start = current if current is not None else 1.0
+        trial_url = _with_query_param(url, param, str(int(start) + 1))
         try:
             # safe_client, not bare httpx: this probe otherwise leaves from the
             # droplet's own IP, skipping SCRAPER_PROXY and the SSRF guard. On a
@@ -156,7 +174,7 @@ def _probe_pagination_via_http(url: str, list_path: str, first_array: list,
         if json.dumps(items[0], sort_keys=True, default=str) != first_key:
             return {
                 "template_url": _template_endpoint(trial_url, {param: "{page}"}),
-                "param": param, "start": 1.0, "step": 1.0,
+                "param": param, "start": start, "step": 1.0,
                 "size_param": None, "size_value": None,
             }
     return None
@@ -244,8 +262,10 @@ def _probe_body_pagination_via_http(url: str, list_path: str, first_array: list,
     if not first_array or not isinstance(body_template, dict):
         return None
     first_key = json.dumps(first_array[0], sort_keys=True, default=str)
-    headers = {"Accept": "application/json",
-               "User-Agent": "InventoryBot/1.0 (+contact@brainspack.com) discovery-probe"}
+    # The UA the json_api adapter will send at sync time. A probe that
+    # identifies differently proves nothing about the sync: clutch.ca's WAF
+    # refuses "InventoryBot" with a 403 and serves a Chrome UA normally.
+    headers = {"Accept": "application/json", "User-Agent": settings.scraper_user_agent}
     headers.update(extra_headers or {})
     page_size_guess = max(len(first_array), 1)
     numeric_keys = [k for k, v in body_template.items()

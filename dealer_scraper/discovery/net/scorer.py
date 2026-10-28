@@ -95,7 +95,8 @@ def _extra_request_headers(headers: dict, heuristics: HeuristicsConfig = DEFAULT
     out = {}
     for k, v in (headers or {}).items():
         kl = k.lower()
-        if kl in heuristics.header_denylist or kl.startswith("sec-") or kl.startswith(":"):
+        if (kl in heuristics.header_denylist or kl.startswith(("sec-", ":"))
+                or kl.startswith(heuristics.header_deny_prefixes)):
             continue
         if isinstance(v, str) and v.strip():
             out[k] = v

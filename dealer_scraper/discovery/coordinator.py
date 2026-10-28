@@ -20,7 +20,7 @@ from ..adapters.browser import _ensure_subprocess_capable_loop
 from ..config import settings
 from .analyzers.dom_repetition import LinkRecord, find_best_listing_cluster
 from .analyzers.visual_structure import BoundingBox, analyze_grid
-from .browser.antibot import classify as classify_antibot
+from .browser.antibot import AntiBotVerdict, classify as classify_antibot
 from .browser.cards import detect_card_selector
 from .cms.fingerprints import detect_cms_platform, get_most_likely_platform
 from .browser.scroll import reveal_lazy_cards
@@ -39,6 +39,8 @@ from .net.pagination_probe import (
     _detect_body_pagination,
     _detect_pagination,
     _endpoint_key,
+    _probe_body_pagination_via_http,
+    _probe_pagination_via_http,
     _template_body,
     _template_endpoint,
 )
@@ -53,6 +55,32 @@ from .strategies.pagination import (
 from .strategies.sitemap import discover_via_sitemap
 
 log = logging.getLogger("scraper.discovery")
+
+
+def _current_page_block(page, ctx: DiscoveryContext):
+    """Classify whatever the page shows right now as blocked or not, using the
+    last main-document response the page recorded. Never raises."""
+    doc = ctx.snapshots.get("last_document") or {}
+    url = getattr(page, "url", "") or ""
+    # A navigation the site dropped outright (connection reset mid-run) leaves
+    # Chrome's own error page and no response at all — the site has stopped
+    # answering us, which is a block, not a layout we failed to read.
+    if doc.get("failed") or url.startswith("chrome-error://"):
+        return AntiBotVerdict(blocked=True, reasons=["navigation failed: site stopped responding"])
+    # Only trust a status recorded for the page actually shown; otherwise it is
+    # a stale 200 from an earlier, healthy load.
+    if doc.get("url") and url and doc["url"].rstrip("/") != url.rstrip("/"):
+        doc = {}
+    try:
+        body = page.text_content("body") or ""
+    except Exception:
+        body = ""
+    try:
+        title = page.title() or ""
+    except Exception:
+        title = ""
+    return classify_antibot(status_code=doc.get("status"), headers=doc.get("headers"),
+                            body_text=f"{title}\n{body}", heuristics=ctx.heuristics)
 
 
 @dataclass
@@ -311,6 +339,31 @@ class DiscoveryCoordinator:
                 page = browser_ctx.new_page()
                 page.on("response", _on_response)
 
+                # Status/headers of the document currently loaded in the page.
+                # The selector check at the end needs them to tell "the link
+                # shape was wrong" from "the site started refusing us part-way
+                # through" — a CloudFront 403 page carries no vendor name in its
+                # body, only the status says it is a block.
+                def _on_document(response) -> None:
+                    try:
+                        if (response.request.resource_type == "document"
+                                and response.frame == page.main_frame):
+                            ctx.snapshots["last_document"] = {
+                                "url": response.url, "status": response.status,
+                                "headers": dict(response.headers or {})}
+                    except Exception:
+                        pass
+
+                def _on_document_failed(request) -> None:
+                    try:
+                        if request.resource_type == "document" and request.frame == page.main_frame:
+                            ctx.snapshots["last_document"] = {"url": request.url, "failed": True}
+                    except Exception:
+                        pass
+
+                page.on("response", _on_document)
+                page.on("requestfailed", _on_document_failed)
+
                 ctx.check_cancel()
                 try:
                     with ctx.timer.stage("homepage"):
@@ -554,6 +607,11 @@ class DiscoveryCoordinator:
                         bodies = _matching_bodies()
                     with ctx.timer.stage("pagination_json_probe"):
                         pagination_body = _detect_body_pagination(bodies)
+                        if pagination_body is None:
+                            pagination_body = _probe_body_pagination_via_http(
+                                json_best["url"], json_best["list_path"], json_best["array"],
+                                json_best.get("post_body") or {},
+                                extra_headers=_extra_request_headers(json_best.get("headers"), h))
                 elif json_best is not None:
                     def _matching_hits() -> list[str]:
                         key = _endpoint_key(json_best["url"])
@@ -575,6 +633,23 @@ class DiscoveryCoordinator:
                         matching = _matching_hits()
                     with ctx.timer.stage("pagination_json_probe"):
                         pagination_json = _detect_pagination(matching, h)
+                        # The page fetched only one batch (clutch.ca loads the
+                        # rest on scroll through a separate call), so there is
+                        # no page param to infer. Ask the API for page 2 under
+                        # the common names instead of shipping a feed that
+                        # reports thousands of vehicles and reads only the first.
+                        if pagination_json is None:
+                            # Probe from the grid's own call when one was seen:
+                            # it carries every param the site sends (clutch adds
+                            # interestRate and page=0 to the bare detail-page call).
+                            paged = [u for u in matching
+                                     if any(k in h.page_param_candidates
+                                            for k, _ in parse_qsl(urlparse(u).query))]
+                            pagination_json = _probe_pagination_via_http(
+                                paged[0] if paged else json_best["url"],
+                                json_best["list_path"], json_best["array"],
+                                extra_headers=_extra_request_headers(json_best.get("headers"), h),
+                                heuristics=h)
 
                 # ------------------------------------------------- prefer json_api
                 field_map: dict[str, str] = {}
@@ -895,10 +970,17 @@ class DiscoveryCoordinator:
             else:
                 try:
                     with ctx.timer.stage("visual_grid"):
-                        page.goto(listing_url, wait_until="domcontentloaded", timeout=h.default_timeout_ms)
-                        ctx.timer.incr("navigations")
-                        wait_for_stable(page, h)
-                        ctx.timer.incr("waits")
+                        # Pagination detection leaves the page on the listing
+                        # already. Reloading it anyway is one more hit on sites
+                        # that rate-limit hard — tabangimotors.com answers 429
+                        # after about a dozen page loads, and this was the one
+                        # that tipped it over.
+                        if page.url.rstrip("/") != listing_url.rstrip("/"):
+                            page.goto(listing_url, wait_until="domcontentloaded",
+                                      timeout=h.default_timeout_ms)
+                            ctx.timer.incr("navigations")
+                            wait_for_stable(page, h)
+                            ctx.timer.incr("waits")
                         sample_paths = probe.get("bestSample") or []
                         if sample_paths:
                             raw_boxes = capture_card_boxes(page, sample_paths)
@@ -949,7 +1031,54 @@ class DiscoveryCoordinator:
                 anchor_hits = page.eval_on_selector_all(card_anchor, "els => els.length")
             except Exception:
                 anchor_hits = None          # selector not usable in the browser at all
+            if anchor_hits == 0:
+                # Pagination detection just reloaded the listing, and a
+                # client-rendered grid may not be there yet: clutch.ca/cars shows
+                # 7 nav anchors at first and its 32 vehicle links only after a
+                # scroll. The candidate pass scrolled before clustering, so give
+                # the check the same chance before calling the shape wrong.
+                try:
+                    page.wait_for_selector(card_anchor, state="attached",
+                                           timeout=min(h.default_timeout_ms, 15000))
+                except Exception:
+                    try:
+                        reveal_lazy_cards(page, heuristics=h)
+                    except Exception:
+                        pass
+                try:
+                    anchor_hits = page.eval_on_selector_all(card_anchor, "els => els.length")
+                except Exception:
+                    anchor_hits = None
             if not anchor_hits:
+                # The candidate pass saw these links on this same page, so first
+                # rule out that the page has since been replaced by a block. On
+                # driftmotors.ca (CloudFront 403) and tabangimotors.com
+                # (Cloudflare 429) the WAF kicks in after several page loads,
+                # and blaming the layout sent both to "quote custom scraper".
+                verdict = _current_page_block(page, ctx)
+                if verdict.blocked:
+                    vendor_note = f" ({verdict.vendor})" if verdict.vendor else ""
+                    status_note = (f", HTTP {verdict.status_code}"
+                                   if verdict.status_code else "")
+                    reason = (f"site started blocking automated access part-way through "
+                              f"discovery{vendor_note}{status_note}")
+                    ctx.evidence.add(Evidence(
+                        EvidenceKind.ANTIBOT_SIGNAL, "explore_listing", f"page:{listing_url}",
+                        weight=1.0, payload={"unresolved": True, "vendor": verdict.vendor,
+                                             "reasons": verdict.reasons},
+                        note="Bot-protection block hit while verifying the listing page."))
+                    ctx.report.antibot_events.append(verdict.vendor or "generic")
+                    ctx.report.add_note(
+                        f"Vehicle links were found on {listing_url}, but the {reason} "
+                        f"before the generated selector could be verified. Retry later, "
+                        f"or route this site through SCRAPER_PROXY.")
+                    result.summary = (
+                        "Vehicle listings were found, but the site began blocking automated "
+                        "access (rate limiting / bot protection) before the configuration "
+                        "could be verified. Retry discovery later, or enable a residential "
+                        "proxy for this site.")
+                    ctx.report.decision = DecisionReport(chosen_key=None, rationale=reason)
+                    return
                 reason = (f"generated vehicle-link selector {card_anchor!r} matches nothing "
                           f"on {listing_url} — the repeating link shape that was detected "
                           f"does not point at vehicle pages")

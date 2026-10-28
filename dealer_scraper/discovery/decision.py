@@ -42,7 +42,9 @@ class JsonApiConfigBuilder:
             endpoint=draft.get("endpoint"),
             endpoints=draft.get("endpoints"),
             page_size=max(1, int(draft.get("page_size") or 25)),
-            start_page=int(draft.get("start_page") or 1),
+            # `or 1` turned a zero-based feed's start of 0 into 1, skipping its
+            # whole first page (clutch.ca: page=0 is the first 32 vehicles).
+            start_page=int(1 if draft.get("start_page") is None else draft["start_page"]),
             page_step=draft.get("page_step"),
             list_path=draft.get("list_path") or "",
             total_path=draft.get("total_path"),

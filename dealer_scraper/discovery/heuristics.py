@@ -198,7 +198,13 @@ class HeuristicsConfig:
         "content-length", "host", "cache-control", "pragma",
         "upgrade-insecure-requests", "content-type", "if-none-match",
         "if-modified-since", "te", "cookie", "priority",
+        # Per-request tracing ids from the site's own RUM/APM scripts.
+        "traceparent", "tracestate", "baggage", "sentry-trace", "x-amzn-trace-id",
+        # WAF challenge tokens live minutes; a frozen copy can only go stale.
+        # clutch.ca's API answers without one, and with an expired one it 403s.
+        "x-aws-waf-token",
     }))
+    header_deny_prefixes: tuple[str, ...] = ("x-datadog-", "x-b3-")
 
     antibot_phrases: tuple[str, ...] = (
         "verify you are human", "checking your browser", "enable javascript and cookies",
