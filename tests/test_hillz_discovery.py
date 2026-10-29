@@ -43,6 +43,40 @@ def test_probe_reads_cars_page_data_with_the_build_id(monkeypatch) -> None:
     assert seen == [URL] and hits[0]["url"] == URL
 
 
+def test_probe_follows_the_search_links_to_a_non_cars_listing(monkeypatch) -> None:
+    """llautoinc.com lists at /used-cars and 404s on /cars; discovery fell back
+    to a browser config on the homepage, which never shows a vehicle card."""
+    monkeypatch.setattr(hillz, "validate_public_url", lambda url: url)
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path.endswith("/used-cars.json"):
+            return httpx.Response(200, json=F7)
+        return httpx.Response(404, text="Not found")
+
+    html = HTML + '<a href="/used-cars?bodystyle=Suv">SUV</a><a href="/used-cars?make=">All</a>'
+    hits = hillz.probe_feed("https://llautoinc.com/", html,
+                            client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert seen == ["/_next/data/ABC123/used-cars.json"]
+    assert hits[0]["url"] == "https://llautoinc.com/_next/data/ABC123/used-cars.json"
+    assert hillz.listing_page(hits[0]["url"]) == "https://llautoinc.com/used-cars"
+
+
+def test_probe_falls_back_to_cars_when_the_linked_page_has_no_data(monkeypatch) -> None:
+    monkeypatch.setattr(hillz, "validate_public_url", lambda url: url)
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return httpx.Response(200, json=F7) if request.url.path.endswith("/cars.json") else httpx.Response(404)
+
+    hits = hillz.probe_feed("https://formula7motors.ca", HTML + '<a href="/inventory?make=Ford">',
+                            client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert seen == ["/_next/data/ABC123/inventory.json", "/_next/data/ABC123/cars.json"]
+    assert hits[0]["url"] == URL
+
+
 def test_non_hillz_or_no_build_id_is_left_alone() -> None:
     assert not hillz.is_hillz_site("<html>zopsoftware</html>")
     assert hillz.probe_feed("https://x.example", "<html>hillzcdn.ca</html>") == []
@@ -85,6 +119,8 @@ def main() -> None:
 
     tests = (
         test_probe_reads_cars_page_data_with_the_build_id,
+        test_probe_follows_the_search_links_to_a_non_cars_listing,
+        test_probe_falls_back_to_cars_when_the_linked_page_has_no_data,
         test_non_hillz_or_no_build_id_is_left_alone,
         test_newer_template_gets_a_detail_block,
         test_older_template_needs_no_detail_block,

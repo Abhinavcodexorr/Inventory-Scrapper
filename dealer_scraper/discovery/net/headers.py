@@ -7,7 +7,33 @@ verification to prove the config works with durable headers only.
 """
 from __future__ import annotations
 
+import base64
+import json
 import re
+
+#: A JWT valid for longer than this is a published client key, not a session.
+_DURABLE_JWT_LIFETIME = 365 * 24 * 3600
+
+
+def _is_published_key(token: str) -> bool:
+    """True for a JWT that is a site's public client key rather than a session
+    token. Supabase's anon key is the common case: a JWT valid for ten years,
+    shipped in the site's JS bundle, sent as both `apikey` and `Authorization:
+    Bearer`. Stripping it as volatile left etobicokefinecars.com's config with
+    no key at all, so every sync got 401 from its Supabase REST endpoint."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    iat, exp = payload.get("iat"), payload.get("exp")
+    if not isinstance(iat, (int, float)) or not isinstance(exp, (int, float)):
+        return False
+    return exp - iat >= _DURABLE_JWT_LIFETIME
 
 
 def _is_volatile_auth(name: str, value: str) -> bool:
@@ -16,6 +42,10 @@ def _is_volatile_auth(name: str, value: str) -> bool:
     value_str = str(value).strip()
 
     if not value_str:
+        return False
+
+    token = re.sub(r"^(bearer|token)\s+", "", value_str, flags=re.I)
+    if _is_published_key(token):
         return False
 
     # JWT-looking: eyJxxx... (base64 header.payload.signature)

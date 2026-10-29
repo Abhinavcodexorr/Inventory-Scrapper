@@ -525,7 +525,7 @@ class DiscoveryCoordinator:
                             platform_hits = hillz_hits
                             ctx.report.add_note(
                                 "HillzDealer site: reading the inventory from its own "
-                                "/cars page data.")
+                                f"{urlparse(hillz.listing_page(hillz_hits[0]['url'])).path} page data.")
                 except Exception:
                     log.debug("HillzDealer page data probe failed for %s", host, exc_info=True)
 
@@ -862,7 +862,7 @@ class DiscoveryCoordinator:
             draft["detail"] = detail
             draft["field_map"] = field_map = {**field_map, "url": "_index.slug"}
             draft["url_base"] = draft.get("url_base") or base_url
-            draft["next_build_id_url"] = f"{draft['url_base'].rstrip('/')}/cars"
+            draft["next_build_id_url"] = hillz.listing_page(json_best["url"])
             from ..adapters.json_api import _dig
 
             index_len = len(_dig(json_best["root"], hillz.INDEX_PATH))

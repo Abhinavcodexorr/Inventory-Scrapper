@@ -13,6 +13,10 @@ Every HillzDealer site is a Next.js app whose /cars page data is served at
 The newer page is server-rendered, so it never fetches that data in the
 browser: traffic sniffing saw nothing, discovery fell back to reading the
 grid, and the sync stopped at the 10 cards on screen (10 of 541).
+
+The listing page is usually /cars, but not always: llautoinc.com lists at
+/used-cars, where /cars 404s. Its search links (/used-cars?bodystyle=Suv) name
+the real one.
 """
 from __future__ import annotations
 
@@ -29,6 +33,9 @@ log = logging.getLogger("scraper.discovery.hillz")
 
 MARKER_RE = re.compile(r"hillzdealer\.com|hillzcdn\.ca", re.I)
 _NEXT_DATA_RE = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
+#: Homepage search links point at the listing page: href="/used-cars?bodystyle=Suv".
+_SEARCH_LINK_RE = re.compile(r'href="(/[A-Za-z0-9_-]+)\?(?:bodystyle|make|Minyear)=', re.I)
+_NEXT_DATA_PATH_RE = re.compile(r"/_next/data/[^/]+(/.+)\.json$")
 
 #: Where the newer template keeps its 10 listed vehicles and its full index.
 LIST_PATH = "pageProps.vehiclesData"
@@ -56,33 +63,48 @@ def _origin(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 
+def listing_paths(html: str) -> list[str]:
+    """Listing pages to try, most likely first: the one the homepage's search
+    links point at, then the usual /cars."""
+    return list(dict.fromkeys([*_SEARCH_LINK_RE.findall(html or ""), "/cars"]))
+
+
+def listing_page(endpoint: str) -> str:
+    """The HTML page behind a /_next/data/<id>/<page>.json endpoint, which is
+    where the current buildId is read from: .../used-cars.json -> /used-cars."""
+    m = _NEXT_DATA_PATH_RE.search(urlsplit(endpoint).path)
+    return f"{_origin(endpoint)}{m.group(1) if m else '/cars'}"
+
+
 def probe_feed(base_url: str, html: str, client: httpx.Client | None = None) -> list[dict]:
-    """Fetch this dealer's /cars page data, shaped like discovery's captured
+    """Fetch this dealer's listing page data, shaped like discovery's captured
     JSON hits so the normal json_api path scores it and maps its fields.
-    Returns [] when the build id is missing or the response lists no vehicles."""
+    Returns [] when the build id is missing or no listing page lists vehicles."""
     bid = build_id(html)
     if not bid:
         return []
-    url = f"{_origin(base_url)}/_next/data/{bid}/cars.json"
     own_client = client is None
     client = client or safe_client(timeout=20.0, headers={"Accept": "application/json"})
     try:
-        validate_public_url(url)
-        resp = client.get(url)
-        data = resp.json() if resp.status_code == 200 else None
-    except (httpx.HTTPError, UnsafeUrlError, ValueError) as exc:
-        log.debug("HillzDealer page data %s unusable: %s", url, exc)
+        for path in listing_paths(html):
+            url = f"{_origin(base_url)}/_next/data/{bid}{path}.json"
+            try:
+                validate_public_url(url)
+                resp = client.get(url)
+                data = resp.json() if resp.status_code == 200 else None
+            except (httpx.HTTPError, UnsafeUrlError, ValueError) as exc:
+                log.debug("HillzDealer page data %s unusable: %s", url, exc)
+                continue
+            props = data.get("pageProps") if isinstance(data, dict) else None
+            if not isinstance(props, dict):
+                continue
+            listed = props.get("vehiclesData") or (props.get("preFetchedData") or {}).get("vehiclesData")
+            if isinstance(listed, list) and listed:
+                return [{"url": url, "json": data, "headers": {}, "method": "GET", "post_body": None}]
         return []
     finally:
         if own_client:
             client.close()
-    props = data.get("pageProps") if isinstance(data, dict) else None
-    if not isinstance(props, dict):
-        return []
-    listed = props.get("vehiclesData") or (props.get("preFetchedData") or {}).get("vehiclesData")
-    if not isinstance(listed, list) or not listed:
-        return []
-    return [{"url": url, "json": data, "headers": {}, "method": "GET", "post_body": None}]
 
 
 def prefer_listing(json_best: dict | None) -> dict | None:
