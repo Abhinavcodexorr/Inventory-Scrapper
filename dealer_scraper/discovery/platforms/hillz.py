@@ -66,6 +66,8 @@ def _origin(url: str) -> str:
 def listing_paths(html: str) -> list[str]:
     """Listing pages to try, most likely first: the one the homepage's search
     links point at, then the usual /cars."""
+    # /cars stays last as the fallback: most HillzDealer sites (22gautosales.com,
+    # formula7motors.ca) list there, and their homepages may carry no search links.
     return list(dict.fromkeys([*_SEARCH_LINK_RE.findall(html or ""), "/cars"]))
 
 
