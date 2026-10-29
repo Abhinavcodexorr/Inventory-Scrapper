@@ -16,6 +16,7 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from ..adapters.base import chromium_launch_args, configured_playwright_proxy
+from ..adapters.blocking import _BLOCKED_TYPES, _NOISE_RE, continue_paced, site_host_of
 from ..adapters.browser import _ensure_subprocess_capable_loop
 from ..config import settings
 from .analyzers.dom_repetition import LinkRecord, find_best_listing_cluster
@@ -55,6 +56,35 @@ from .strategies.pagination import (
 from .strategies.sitemap import discover_via_sitemap
 
 log = logging.getLogger("scraper.discovery")
+
+
+def _report_throttled(ctx: DiscoveryContext, result) -> bool:
+    """If the site refused its own scripts/data calls during the run, say so
+    instead of blaming the layout, and return True. A page whose inventory
+    script came back 429 renders an empty grid, which reads exactly like a
+    layout the engine does not understand."""
+    throttled = ctx.snapshots.get("throttled") or []
+    if not throttled:
+        return False
+    statuses = sorted({s for s, _ in throttled})
+    examples = ", ".join(dict.fromkeys(u for _, u in throttled[:3]))
+    reason = (f"site refused {len(throttled)} of its own script/data request(s) "
+              f"(HTTP {'/'.join(map(str, statuses))}), e.g. {examples}")
+    ctx.evidence.add(Evidence(
+        EvidenceKind.ANTIBOT_SIGNAL, "subresource_throttle", "", weight=1.0,
+        payload={"unresolved": True, "count": len(throttled), "statuses": statuses},
+        note="The site rate-limited the scripts that render its inventory."))
+    ctx.report.antibot_events.append("rate_limit")
+    ctx.report.add_note(
+        f"The {reason}. Its inventory is rendered by those scripts, so the listing "
+        f"showed no vehicles. Retry discovery later, or route this site through "
+        f"SCRAPER_PROXY.")
+    result.summary = (
+        "The site is rate-limiting automated access: it refused the scripts that "
+        "display its vehicles, so no inventory could be read. Retry discovery "
+        "later, or enable a residential proxy for this site.")
+    ctx.report.decision = DecisionReport(chosen_key=None, rationale=reason)
+    return True
 
 
 def _current_page_block(page, ctx: DiscoveryContext):
@@ -332,9 +362,22 @@ class DiscoveryCoordinator:
                         validate_public_url(route.request.url)
                     except UnsafeUrlError:
                         route.abort()
+                        return
+                    # Same filter the scrape adapter applies by default, so
+                    # discovery sees the site as the sync will — and sends a
+                    # fraction of the requests. btownautosales.ca (sm360) loads
+                    # ~90 files per page and answers 429 to its own inventory
+                    # script after a few candidate pages, leaving "No Results".
+                    req = route.request
+                    if settings.resource_blocking_default and (
+                            req.resource_type in _BLOCKED_TYPES
+                            or (req.resource_type != "document"
+                                and _NOISE_RE.search(urlparse(req.url).netloc.lower()))):
+                        route.abort()
                     else:
-                        route.continue_()
+                        continue_paced(route, site_host)
 
+                site_host = site_host_of(base_url)
                 browser_ctx.route("**/*", _guard_request)
                 page = browser_ctx.new_page()
                 page.on("response", _on_response)
@@ -361,7 +404,22 @@ class DiscoveryCoordinator:
                     except Exception:
                         pass
 
+                # A 200 page whose own scripts or data calls were refused renders
+                # empty ("No Results") — the document status never shows it.
+                def _on_throttled(response) -> None:
+                    try:
+                        # 429 only: sites 403 assorted own endpoints (logged-in
+                        # user APIs) on perfectly healthy pages.
+                        if (response.status == 429
+                                and response.request.resource_type in ("script", "xhr", "fetch")
+                                and _bare_host(response.url) == _bare_host(base_url)):
+                            ctx.snapshots.setdefault("throttled", []).append(
+                                (response.status, response.url.split("?")[0]))
+                    except Exception:
+                        pass
+
                 page.on("response", _on_document)
+                page.on("response", _on_throttled)
                 page.on("requestfailed", _on_document_failed)
 
                 ctx.check_cancel()
@@ -559,6 +617,8 @@ class DiscoveryCoordinator:
                     _best_vehicle_json(json_hits, h, listing_url=best[1] if best else None))
 
                 if best is None and (json_best is None or json_best["score"] < h.json_min_score):
+                    if _report_throttled(ctx, result):
+                        return
                     result.summary = (
                         "No vehicle inventory listing could be found automatically. The site "
                         "likely uses a layout our engine does not yet support, so it needs a "
@@ -673,6 +733,8 @@ class DiscoveryCoordinator:
 
                 if best is None:
                     # Only a weak/unusable JSON signal was found, and no DOM listing either.
+                    if _report_throttled(ctx, result):
+                        return
                     result.summary = (
                         "No vehicle inventory listing could be found automatically. The site "
                         "likely uses a layout our engine does not yet support, so it needs a "
@@ -1078,6 +1140,8 @@ class DiscoveryCoordinator:
                         "could be verified. Retry discovery later, or enable a residential "
                         "proxy for this site.")
                     ctx.report.decision = DecisionReport(chosen_key=None, rationale=reason)
+                    return
+                if _report_throttled(ctx, result):
                     return
                 reason = (f"generated vehicle-link selector {card_anchor!r} matches nothing "
                           f"on {listing_url} — the repeating link shape that was detected "

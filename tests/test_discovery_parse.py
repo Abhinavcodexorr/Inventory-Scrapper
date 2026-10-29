@@ -356,6 +356,25 @@ def test_build_detail_id_regex_falls_back_to_slug_when_no_numeric_tail():
     assert _build_detail_id_regex("inventory", mixed) == r"/inventory/([\w-]+)"
 
 
+def test_build_detail_id_regex_skips_fixed_segment_that_collapses_ids():
+    # driftmotors.ca: /cars/used/<slug>. Capturing the segment after /cars/
+    # gave every vehicle the id "used" and a sync collapsed 88 rows into 1.
+    import re
+    samples = ["/cars/used/2019-honda-civic-lx-7781", "/cars/used/2020-toyota-camry-se-7790",
+               "/cars/used/2018-ford-f-150-xlt-7712"]
+    pattern = _build_detail_id_regex("cars", samples)
+    ids = [re.search(pattern, s).group(1) for s in samples]
+    assert len(set(ids)) == 3, (pattern, ids)
+    assert re.search(pattern, "https://www.driftmotors.ca/cars/used/2019-honda-civic-lx-7781/").group(1) \
+        == "2019-honda-civic-lx-7781"
+
+    # Deep shape (tabangimotors): the per-vehicle id is the last segment.
+    deep = ["/vehicles/2015/honda/civic/mississauga/on/12345678/",
+            "/vehicles/2015/honda/civic/mississauga/on/12345679/"]
+    pattern = _build_detail_id_regex("vehicles", deep)
+    assert [re.search(pattern, d).group(1) for d in deep] == ["12345678", "12345679"]
+
+
 # ---- pagination detection (fake Playwright page — still no real browser) ----
 class _FakeHandle:
     def __init__(self, on_click):
@@ -504,6 +523,7 @@ def main() -> None:
     test_detect_body_pagination_rejects_mismatched_or_noisy_pairs()
     test_build_detail_id_regex_prefers_trailing_numeric_id()
     test_build_detail_id_regex_falls_back_to_slug_when_no_numeric_tail()
+    test_build_detail_id_regex_skips_fixed_segment_that_collapses_ids()
     test_detect_dom_pagination_url_mode_from_dom_hints()
     test_detect_dom_pagination_scroll_mode_when_lazy_load_grows()
     test_detect_dom_pagination_click_mode_emits_next_selector()

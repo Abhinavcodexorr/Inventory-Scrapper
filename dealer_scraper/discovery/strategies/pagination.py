@@ -189,8 +189,32 @@ def _build_detail_id_regex(seg: str, sample_paths: list[str]) -> str:
         if len(parts) >= 3:
             tails.append(parts[-1])
     if tails and len(tails) == len(sample_paths) and all(re.fullmatch(r"\d+", t) for t in tails):
-        return rf"/{seg}/[\w-]+/(\d+)"
-    return rf"/{seg}/([\w-]+)"
+        # One slug before the id is the common shape; deeper ones
+        # (/vehicles/2015/honda/civic/mississauga/on/12345678) need any depth.
+        for numeric in (rf"/{seg}/[\w-]+/(\d+)", rf"/{seg}/(?:[\w-]+/)+(\d+)"):
+            if _distinct_ids(numeric, sample_paths):
+                return numeric
+    pattern = rf"/{seg}/([\w-]+)"
+    # The id must tell the sampled vehicles apart. On driftmotors.ca every
+    # detail URL is /cars/used/<slug>, so the segment after /cars/ is "used"
+    # for all of them: every row got external_id "used", the engine matched
+    # them all to one car, and a sync reported "88 rows, 1 distinct". When
+    # that happens, take the last path segment — the per-vehicle part.
+    if len(sample_paths) >= 2 and not _distinct_ids(pattern, sample_paths):
+        last = rf"/{seg}/(?:[\w-]+/)*([\w-]+)/?(?=[?#]|$)"
+        if _distinct_ids(last, sample_paths):
+            return last
+    return pattern
+
+
+def _distinct_ids(pattern: str, paths: list[str]) -> bool:
+    ids = []
+    for p in paths:
+        m = re.search(pattern, p)
+        if not m:
+            return False
+        ids.append(m.group(1))
+    return len(set(ids)) == len(ids)
 
 
 def _detect_dom_pagination(page, listing_url: str, timeout_ms: int,

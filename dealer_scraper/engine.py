@@ -428,11 +428,25 @@ def run_dealer(session: Session, dealer: Dealer, adapter=None) -> ScrapeRun:
         and duplicate_count > run.scraped_count * settings.max_duplicate_fraction
     ):
         run.status = "incomplete"
+        distinct = run.scraped_count - duplicate_count
+        if dealer.adapter_mode == "browser":
+            # A browser listing is read once per page, so collapsed rows mean the
+            # ids collided, not that pages repeated: an id_regex capturing a fixed
+            # word ("/cars/used/<slug>" -> "used") gives every vehicle one id.
+            cause = (
+                "different vehicles were given the same id. Usually 'id_regex' "
+                "captures a fixed part of the detail URL (e.g. 'used' in "
+                "/cars/used/<vehicle>) instead of the part unique to each vehicle"
+                if distinct <= 1 else
+                "the same pages were read repeatedly, or 'id_regex' gives several "
+                "vehicles the same id")
+        else:
+            cause = (
+                "the same pages were read repeatedly. Usually the endpoint has no "
+                "{page} placeholder, or the site ignores its page parameter")
         run.error = run.error or (
-            f"Scraped {run.scraped_count} rows but only {run.scraped_count - duplicate_count} "
-            f"were distinct vehicles — the same pages were read repeatedly. Usually the "
-            f"endpoint has no {{page}} placeholder, or the site ignores its page parameter. "
-            f"No vehicles were marked removed."
+            f"Scraped {run.scraped_count} rows but only {distinct} were distinct "
+            f"vehicles — {cause}. No vehicles were marked removed."
         )
         run.finished_at = _now()
         _finish_dealer(dealer, run, sync_status="incomplete", refresh_count=True,

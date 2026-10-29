@@ -11,6 +11,7 @@ the single highest-leverage network optimization available.
 from __future__ import annotations
 
 import re
+import time
 from typing import Callable
 from urllib.parse import urlparse
 
@@ -51,13 +52,54 @@ _NOISE_RE = re.compile(
 )
 
 
-def install_blocking(context, *, block_images: bool = True) -> Callable[[], int]:
+# The site's own scripts/stylesheets are fetched through the route instead of
+# being left to the browser. sm360-hosted dealers (btownautosales.ca and ~60
+# more) answer 429 when Chromium requests their ~20 scripts in parallel; the
+# inventory script is among the refused ones, so the listing renders "No
+# Results". Fetched through the route they arrive spaced out and are served —
+# back to back on one IP: 3 refusals and 0 vehicles vs none and 12.
+_PACED_TYPES = frozenset({"script", "stylesheet"})
+_RETRY_DELAYS = (1.5, 3.0, 6.0)
+
+
+def site_host_of(url: str) -> str:
+    """Bare host (no port, no leading www.) used to recognise a site's own files."""
+    host = urlparse(url).netloc.lower().split(":")[0]
+    return host[4:] if host.startswith("www.") else host
+
+
+def continue_paced(route, site_host: str | None) -> None:
+    """Continue a request, fetching the site's own scripts/stylesheets through
+    the route and retrying a 429 with back-off. Redirects are not followed
+    here, so the browser re-requests each hop through the same route (and
+    whatever guard sits on it). Falls back to a plain continue on any error."""
+    req = route.request
+    if not site_host or req.resource_type not in _PACED_TYPES or site_host_of(req.url) != site_host:
+        return route.continue_()
+    try:
+        resp = route.fetch(max_redirects=0)
+        for delay in _RETRY_DELAYS:
+            if resp.status != 429:
+                break
+            time.sleep(delay)
+            resp = route.fetch(max_redirects=0)
+        route.fulfill(response=resp)
+    except Exception:
+        try:
+            route.continue_()
+        except Exception:
+            pass
+
+
+def install_blocking(context, *, block_images: bool = True,
+                     site_url: str | None = None) -> Callable[[], int]:
     """Route every request in `context` through a filter.
 
     Returns a zero-arg getter for how many requests were aborted, meant to
     feed StageTimer.incr("requests_blocked") once iteration finishes.
     """
     blocked = {"n": 0}
+    site_host = site_host_of(site_url) if site_url else None
 
     def handler(route):
         req = route.request
@@ -89,7 +131,7 @@ def install_blocking(context, *, block_images: bool = True) -> Callable[[], int]
         if block_images and rtype in _BLOCKED_TYPES:
             blocked["n"] += 1
             return route.abort()
-        route.continue_()
+        continue_paced(route, site_host)
 
     context.route("**/*", handler)
     return lambda: blocked["n"]

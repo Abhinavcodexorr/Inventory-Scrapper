@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 
+from dealer_scraper.adapters import blocking
 from dealer_scraper.config import settings
 from dealer_scraper.discovery.context import Candidate, CandidateKind, DiscoveryContext
 from dealer_scraper.discovery.decision import DecisionEngine
@@ -159,6 +160,45 @@ def test_zero_based_start_page_survives_config_build():
     assert config["start_page"] == 0
 
 
+class _Route:
+    """Playwright route stand-in: fetch() replays `statuses` in order."""
+
+    def __init__(self, url: str, rtype: str, statuses: list[int]):
+        self.request = type("R", (), {"url": url, "resource_type": rtype})()
+        self._statuses = list(statuses)
+        self.fetches = 0
+        self.outcome = None
+
+    def fetch(self, max_redirects=None):
+        assert max_redirects == 0   # redirects go back through the guarded route
+        self.fetches += 1
+        return type("Resp", (), {"status": self._statuses.pop(0)})()
+
+    def fulfill(self, response):
+        self.outcome = ("fulfill", response.status)
+
+    def continue_(self):
+        self.outcome = ("continue", None)
+
+
+def test_paced_fetch_retries_a_refused_site_script(monkeypatch):
+    # sm360: the inventory script answers 429 when requested in a burst.
+    monkeypatch.setattr(blocking.time, "sleep", lambda s: None)
+    route = _Route("https://www.dealer.example.com/js/dynamic-inventory.min.js", "script", [429, 200])
+    blocking.continue_paced(route, "dealer.example.com")
+    assert route.outcome == ("fulfill", 200) and route.fetches == 2
+
+
+def test_paced_fetch_leaves_other_hosts_and_types_to_the_browser(monkeypatch):
+    monkeypatch.setattr(blocking.time, "sleep", lambda s: None)
+    other = _Route("https://cdn.vendor.com/lib.js", "script", [200])
+    blocking.continue_paced(other, "dealer.example.com")
+    assert other.outcome == ("continue", None) and other.fetches == 0
+    xhr = _Route("https://dealer.example.com/api/listing", "xhr", [200])
+    blocking.continue_paced(xhr, "dealer.example.com")
+    assert xhr.outcome == ("continue", None) and xhr.fetches == 0
+
+
 def test_extra_headers_drop_waf_token_and_tracing_ids():
     captured = {
         "origin": "https://www.clutch.ca",
@@ -189,6 +229,8 @@ def main() -> None:
         test_probe_uses_sync_user_agent_and_observed_start_page(mp)
         test_probe_without_observed_page_asks_for_page_two(mp)
         test_zero_based_start_page_survives_config_build()
+        test_paced_fetch_retries_a_refused_site_script(mp)
+        test_paced_fetch_leaves_other_hosts_and_types_to_the_browser(mp)
         test_extra_headers_drop_waf_token_and_tracing_ids()
     finally:
         mp.undo()

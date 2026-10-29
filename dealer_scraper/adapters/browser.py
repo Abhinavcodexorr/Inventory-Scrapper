@@ -535,7 +535,8 @@ class BrowserAdapter:
             ctx.add_init_script(_STEALTH_JS)  # hide automation fingerprints from the WAF
             get_blocked_count = (lambda: 0)
             if self.block_resources:
-                get_blocked_count = install_blocking(ctx)
+                get_blocked_count = install_blocking(
+                    ctx, site_url=self.base_url or self.cfg["list_url"])
             page = ctx.new_page()
             try:
                 # Warm-up: hit the homepage first so AWS WAF issues its token cookie
