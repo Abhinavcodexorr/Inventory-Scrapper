@@ -27,7 +27,9 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from ..heuristics import DEFAULT_HEURISTICS, HeuristicsConfig
 from ..net.safe_http import UnsafeUrlError, safe_client, validate_public_url
+from ..net.scorer import _score_item
 
 log = logging.getLogger("scraper.discovery.hillz")
 
@@ -121,6 +123,31 @@ def prefer_listing(json_best: dict | None) -> dict | None:
     if detail_block(root, LIST_PATH, json_best.get("url", "")) is None:
         return json_best
     return {**json_best, "list_path": LIST_PATH, "array": listed}
+
+
+def single_vehicle_listing(hits: list[dict],
+                           heuristics: HeuristicsConfig = DEFAULT_HEURISTICS) -> dict | None:
+    """A lot with one car, which the general search for a vehicle array skips:
+    it needs two items, so a stray one-item list is not mistaken for inventory.
+    Here the list's location is known, so one vehicle is still the listing.
+    automodealz.ca has one available car, and its sold car is kept separately in
+    `vehiclesSoldData`."""
+    for hit in hits:
+        props = hit["json"].get("pageProps") if isinstance(hit.get("json"), dict) else None
+        if not isinstance(props, dict):
+            continue
+        newer = props.get("vehiclesData")
+        older = (props.get("preFetchedData") or {}).get("vehiclesData")
+        listed, path = ((newer, LIST_PATH) if newer
+                        else (older, "pageProps.preFetchedData.vehiclesData"))
+        if not (isinstance(listed, list) and len(listed) == 1 and isinstance(listed[0], dict)):
+            continue
+        score = float(_score_item(listed[0], heuristics))
+        if score >= heuristics.json_min_score:
+            return {"url": hit["url"], "list_path": path, "array": listed, "root": hit["json"],
+                    "score": score, "headers": hit.get("headers") or {},
+                    "method": hit.get("method") or "GET", "post_body": hit.get("post_body")}
+    return None
 
 
 def detail_block(root: object, list_path: str, endpoint: str) -> dict | None:

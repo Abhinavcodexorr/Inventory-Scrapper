@@ -110,6 +110,39 @@ def test_featured_widget_does_not_beat_the_indexed_main_list() -> None:
     assert picked["list_path"] == "pageProps.vehiclesData" and picked["array"] == listed
 
 
+def _older_template_with(vehicles: list, sold: list | None = None) -> dict:
+    return {"pageProps": {"preFetchedData": {"vehiclesData": vehicles, "vehiclesSoldData": sold or []}}}
+
+
+def _a_vehicle() -> dict:
+    return copy.deepcopy(F7["pageProps"]["vehiclesData"][0])
+
+
+def test_one_car_lot_on_the_older_template_is_a_listing() -> None:
+    """automodealz.ca: one available car, and a sold one in its own list."""
+    sold = _a_vehicle()
+    data = _older_template_with([_a_vehicle()], [sold])
+    assert _best_vehicle_json([_hit(data)], DEFAULT_HEURISTICS) is None
+    picked = hillz.single_vehicle_listing([_hit(data)])
+    assert picked["list_path"] == "pageProps.preFetchedData.vehiclesData"
+    assert len(picked["array"]) == 1 and picked["score"] >= DEFAULT_HEURISTICS.json_min_score
+
+
+def test_one_car_lot_on_the_newer_template_is_a_listing() -> None:
+    data = {"pageProps": {"vehiclesData": [_a_vehicle()]}}
+    assert hillz.single_vehicle_listing([_hit(data)])["list_path"] == hillz.LIST_PATH
+
+
+def test_a_lone_entry_without_vehicle_fields_is_not_a_listing() -> None:
+    data = _older_template_with([{"id": 1, "name": "Main lot"}])
+    assert hillz.single_vehicle_listing([_hit(data)]) is None
+
+
+def test_an_empty_lot_or_only_sold_cars_is_not_a_listing() -> None:
+    assert hillz.single_vehicle_listing([_hit(_older_template_with([]))]) is None
+    assert hillz.single_vehicle_listing([_hit(_older_template_with([], [_a_vehicle()]))]) is None
+
+
 def main() -> None:
     """`python -m tests.test_hillz_discovery` — the probe test takes
     monkeypatch, so the whole file runs through pytest."""
@@ -125,6 +158,10 @@ def main() -> None:
         test_newer_template_gets_a_detail_block,
         test_older_template_needs_no_detail_block,
         test_featured_widget_does_not_beat_the_indexed_main_list,
+        test_one_car_lot_on_the_older_template_is_a_listing,
+        test_one_car_lot_on_the_newer_template_is_a_listing,
+        test_a_lone_entry_without_vehicle_fields_is_not_a_listing,
+        test_an_empty_lot_or_only_sold_cars_is_not_a_listing,
     )
     sys.exit(_pytest.main([__file__, "-q", "-p", "no:cacheprovider",
                            "-k", " or ".join(t.__name__ for t in tests)]))

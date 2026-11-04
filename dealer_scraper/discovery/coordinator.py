@@ -655,7 +655,8 @@ class DiscoveryCoordinator:
                 if platform_hits:
                     json_hits[:] = platform_hits
                 json_best = hillz.prefer_listing(
-                    _best_vehicle_json(json_hits, h, listing_url=best[1] if best else None))
+                    _best_vehicle_json(json_hits, h, listing_url=best[1] if best else None)
+                ) or hillz.single_vehicle_listing(platform_hits, h)
 
                 if best is None and (json_best is None or json_best["score"] < h.json_min_score):
                     if _report_throttled(ctx, result):
