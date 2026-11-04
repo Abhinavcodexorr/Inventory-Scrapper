@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
+import httpx
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
@@ -36,6 +37,18 @@ _VEHICLE_FIELDS = (
     "exterior_color", "interior_color", "transmission", "fuel_type", "drivetrain",
     "price", "original_price", "currency", "url",
 )
+
+
+def _failure_message(exc: Exception) -> str:
+    """The run's error text. A 401 says what to do: the usual cause is a dealer
+    saved before discovery kept published API keys, or a key the site changed."""
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 401:
+        return (
+            "The website's inventory API rejected the saved settings (401 Unauthorized): "
+            "the saved API key is missing or has changed. Run Detect settings for this "
+            f"dealership again and save the result. url={exc.request.url}"
+        )
+    return f"{type(exc).__name__}: {exc}"
 
 
 def _now() -> datetime:
@@ -360,7 +373,7 @@ def run_dealer(session: Session, dealer: Dealer, adapter=None) -> ScrapeRun:
     except Exception as exc:  # scrape/parse failure -> do NOT touch removals
         complete = False
         run.status = "failed"
-        run.error = f"{type(exc).__name__}: {exc}"[:1000]
+        run.error = _failure_message(exc)[:1000]
         run.finished_at = _now()
         _finish_dealer(dealer, run, sync_status="failed", refresh_count=False)
         _write_snapshot(session, dealer, run, sync_status="failed")

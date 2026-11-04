@@ -36,7 +36,8 @@ def _main(argv: list[str]) -> int:
         print(f"\n--- discovering {url} ...", flush=True)
         r = discover(url, headless=not args.headed)
         rows.append(r)
-        flag = "CUSTOM WORK" if r.requires_custom_work else "supported"
+        flag = ("CUSTOM WORK" if r.requires_custom_work
+                else "not supported yet" if r.verdict == "unsupported" else "supported")
         print(f"    verdict={r.verdict:<13} [{flag}]  vehicles={r.vehicles_found:<5} "
               f"extract={r.extract or '-':<7} paginate={r.pagination or '-'}")
         print(f"    {r.summary}")
@@ -53,8 +54,9 @@ def _main(argv: list[str]) -> int:
               f"{'YES — quote custom scraper' if r.requires_custom_work else 'no'}")
     billable = sum(1 for r in rows if r.requires_custom_work)
     print("-" * 78)
-    print(f"{len(rows)} site(s) checked · {len(rows) - billable} supported · "
-          f"{billable} need custom work")
+    supported = sum(1 for r in rows if r.verdict != "unsupported")
+    print(f"{len(rows)} site(s) checked · {supported} supported · "
+          f"{billable} need custom work · {len(rows) - supported - billable} could not be read")
     return 0
 
 

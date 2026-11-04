@@ -47,6 +47,8 @@ export function JobsPage() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [dealerId, setDealerId] = useState('');
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
 
   const dealersQ = useDealerList();
   const runsAgg = useAllRuns(dealersQ.data, RUNS_PER_DEALER, Boolean(dealersQ.data?.length), LIVE_POLL_MS);
@@ -83,6 +85,10 @@ export function JobsPage() {
       return true;
     });
   }, [runsAgg.runs, search, status, dealerId]);
+
+  // Filters and live polling can shrink the list, so never point past its end.
+  const lastPage = Math.max(0, Math.ceil(filtered.length / pageSize) - 1);
+  const currentPage = Math.min(page, lastPage);
 
   const activeFilterCount = [search, status, dealerId].filter(Boolean).length;
 
@@ -375,9 +381,14 @@ export function JobsPage() {
           getRowId={(r) => r.id}
           loading={runsAgg.isLoading}
           onRowClick={(r) => navigate(`/dealers/${r.dealer_id}`)}
-          page={0}
-          pageSize={50}
-          pageSizeOptions={[50, 100]}
+          page={currentPage}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(0);
+          }}
+          pageSizeOptions={[25, 50, 100]}
           storageKey="jobs"
           rowNoun="runs"
           maxHeight="max(520px, calc(100vh - 300px))"

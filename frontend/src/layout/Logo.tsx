@@ -3,7 +3,7 @@ import { useTheme } from '@mui/material/styles';
 import { useId } from 'react';
 
 /**
- * Product mark: a stylised speed/inventory glyph. Drawn inline so it inherits
+ * Product mark: a car on a rounded tile. Drawn inline so it inherits
  * the theme's primary ramp instead of shipping a second set of brand assets.
  */
 export function Logo({ size = 32 }: { size?: number }) {
@@ -30,18 +30,15 @@ export function Logo({ size = 32 }: { size?: number }) {
       </defs>
       <rect width="32" height="32" rx="9" fill={`url(#${gradientId})`} />
       <path
-        d="M8 20.5c0-.6.4-1 1-1h4.2c.5 0 .9.4.9 1s-.4 1-.9 1H9c-.6 0-1-.5-1-1Z"
+        d="M5.5 20.5v-3.3c0-.7.4-1.3 1-1.6l2-1 1.8-3.8c.4-.9 1.3-1.5 2.3-1.5h6.8c.9 0 1.8.5 2.2 1.3l2.1 3.9 1.7.6c.8.3 1.2 1 1.2 1.8v3.6c0 .6-.4 1-1 1h-19c-.6 0-1.1-.4-1.1-1Z"
         fill="#fff"
-        fillOpacity="0.55"
       />
       <path
-        d="M8 16c0-.6.4-1 1-1h9.5c.6 0 1 .4 1 1s-.4 1-1 1H9c-.6 0-1-.4-1-1Z"
-        fill="#fff"
-        fillOpacity="0.8"
+        d="M11.4 14.2l1.3-2.8c.1-.2.3-.4.6-.4h2.7v3.2h-4.6Zm6.6 0V11h1.8c.2 0 .4.1.5.3l1.6 2.9H18Z"
+        fill={primary}
       />
-      <path d="M8 11.5c0-.6.4-1 1-1h14c.6 0 1 .4 1 1s-.4 1-1 1H9c-.6 0-1-.4-1-1Z" fill="#fff" />
-      <circle cx="21.5" cy="20.5" r="3.5" fill="#fff" />
-      <circle cx="21.5" cy="20.5" r="1.4" fill={primary} />
+      <circle cx="10.8" cy="21.8" r="2.9" fill="#fff" stroke={primary} strokeWidth="1.4" />
+      <circle cx="21.2" cy="21.8" r="2.9" fill="#fff" stroke={primary} strokeWidth="1.4" />
     </Box>
   );
 }

@@ -95,6 +95,8 @@ export function DealerDetailPage() {
   const [tab, setTab] = useState<Tab>('overview');
   const [invPage, setInvPage] = useState(0);
   const [invPageSize, setInvPageSize] = useState(settings.pageSize);
+  const [runsPage, setRunsPage] = useState(0);
+  const [runsPageSize, setRunsPageSize] = useState(25);
 
   const enabled = Number.isFinite(dealerId);
 
@@ -670,8 +672,13 @@ export function DealerDetailPage() {
             columns={runColumns}
             getRowId={(r) => r.id}
             loading={runsQ.isLoading}
-            page={0}
-            pageSize={25}
+            page={Math.min(runsPage, Math.max(0, Math.ceil((runsQ.data?.length ?? 0) / runsPageSize) - 1))}
+            pageSize={runsPageSize}
+            onPageChange={setRunsPage}
+            onPageSizeChange={(size) => {
+              setRunsPageSize(size);
+              setRunsPage(0);
+            }}
             pageSizeOptions={[25, 50]}
             rowNoun="runs"
             empty={

@@ -40,7 +40,12 @@ from typing import Iterator
 from ..config import settings
 from ..normalize import NormalizedVehicle, normalize
 from ..timing import StageTimer
-from .base import chromium_launch_args, configured_playwright_proxy, require_config
+from .base import (
+    chromium_launch_args,
+    configured_playwright_proxy,
+    require_config,
+    suspended_site_error,
+)
 from .blocking import install_blocking_async, uninstall_blocking_async
 from .browser import (
     _COLLECT_JS,
@@ -404,6 +409,8 @@ class AsyncBrowserAdapter:
                 body = (await page.text_content("body") or "")[:400].replace("\n", " ")
             except Exception:
                 pass
+            if suspended := suspended_site_error(str(page.url), title, body):
+                raise RuntimeError(suspended)
             raise RuntimeError(
                 f"'{self.wait_selector}' never appeared after {retries} tries. "
                 f"Likely bot/WAF blocking the inventory API. "

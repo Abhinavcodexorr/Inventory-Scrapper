@@ -692,7 +692,9 @@ export function DealerFormPage() {
         <Tooltip
           title={
             discovery?.verdict === 'unsupported'
-              ? 'This website is not supported. It requires custom scraper development before it can be enabled.'
+              ? discovery.requires_custom_work
+                ? 'This website is not supported. It requires custom scraper development before it can be enabled.'
+                : 'This website could not be opened. Fix the problem shown above, then detect settings again.'
               : ''
           }
         >
@@ -718,7 +720,9 @@ export function DealerFormPage() {
         </Button>
         {discovery?.verdict === 'unsupported' && (
           <Typography variant="caption" color="error.main" sx={{ ml: 'auto' }}>
-            Blocked: website requires custom development
+            {discovery.requires_custom_work
+              ? 'Blocked: website requires custom development'
+              : 'Blocked: website could not be opened'}
           </Typography>
         )}
         {Object.keys(errors).length > 0 && touched && !discovery?.verdict && (
@@ -756,7 +760,9 @@ function DiscoveryBanner({ discovery }: { discovery: Discovery }) {
     discovery.verdict === 'ready'
       ? '✓ You can now save and enable this dealership'
       : discovery.verdict === 'unsupported'
-        ? '✗ This website requires custom scraper development — contact sales'
+        ? discovery.requires_custom_work
+          ? '✗ This website requires custom scraper development — contact sales'
+          : '✗ Fix the problem above, then detect settings again'
         : '⚠ Review one scrape run before enabling automatic syncs';
 
   return (
@@ -765,7 +771,9 @@ function DiscoveryBanner({ discovery }: { discovery: Discovery }) {
         {discovery.verdict === 'ready'
           ? 'Website supported'
           : discovery.verdict === 'unsupported'
-            ? 'Website not supported yet'
+            ? discovery.requires_custom_work
+              ? 'Website not supported yet'
+              : 'Website could not be opened'
             : 'Needs review'}
       </Typography>
       <Typography variant="body2" sx={{ mt: 0.5 }}>

@@ -7,10 +7,27 @@ New site *types* (e.g. a GraphQL or browser adapter) are new subclasses.
 from __future__ import annotations
 
 import os
+import re
 from typing import Iterator, Protocol, runtime_checkable
 
 from ..normalize import NormalizedVehicle
 from ..proxy import ProxyConfigError, configured_proxy, resolve_proxy
+
+# cPanel's own page for a suspended hosting account. universalauto.ca served it
+# instead of its listings, and the run blamed bot protection.
+_SUSPENDED_RE = re.compile(r"suspendedpage\.cgi|account (?:has been )?suspended", re.I)
+
+
+def suspended_site_error(url: str, title: str, body: str) -> str | None:
+    """The message for a run that landed on a hosting suspension page, else None."""
+    if not (_SUSPENDED_RE.search(url or "") or _SUSPENDED_RE.search(title or "")
+            or _SUSPENDED_RE.search(body or "")):
+        return None
+    return (
+        f"The dealer's website is offline: its hosting account is suspended, so it has no "
+        f"listings to read. This is not a scraper problem. Check with the dealer, or mark "
+        f"this dealership inactive until the site is back. url={url}"
+    )
 
 # Args every Chromium launch gets. The two --disable-* flags hide automation
 # fingerprints a WAF looks for.

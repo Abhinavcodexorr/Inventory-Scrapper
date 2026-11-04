@@ -45,7 +45,12 @@ from urllib.parse import urljoin
 from ..config import settings
 from ..normalize import NormalizedVehicle, normalize
 from ..timing import StageTimer
-from .base import chromium_launch_args, configured_playwright_proxy, require_config
+from .base import (
+    chromium_launch_args,
+    configured_playwright_proxy,
+    require_config,
+    suspended_site_error,
+)
 from .blocking import install_blocking, uninstall_blocking
 from .waits import count_matching, wait_count_stable, wait_for_growth, wait_for_vehicles
 
@@ -601,6 +606,8 @@ class BrowserAdapter:
                         body = (page.text_content("body") or "")[:400].replace("\n", " ")
                     except Exception:
                         pass
+                    if suspended := suspended_site_error(str(page.url), title, body):
+                        raise RuntimeError(suspended)
                     # Distinguish "the page never loaded" from "the page loaded
                     # but the grid did not". Both used to raise the selector
                     # message blaming bot protection, so a Decodo 502 was

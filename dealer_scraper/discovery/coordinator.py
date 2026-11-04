@@ -58,6 +58,50 @@ from .strategies.sitemap import discover_via_sitemap
 log = logging.getLogger("scraper.discovery")
 
 
+#: Browser errors that say why a homepage would not open, none of which custom
+#: scraper work can fix. Reporting them all as "needs a custom scraper" had
+#: operators quoting work for a mistyped domain or an expired certificate.
+_HOMEPAGE_FAILURES = (
+    (("ERR_NAME_NOT_RESOLVED", "ERR_NAME_RESOLUTION"),
+     "This website's address could not be found. Check the URL for a typo; if it is "
+     "correct, the domain may have expired or be offline."),
+    (("ERR_CERT_", "ERR_SSL_"),
+     "This website's security certificate is invalid or expired, so it could not be "
+     "opened securely. The dealer's web host needs to fix the certificate; try again "
+     "after that."),
+    (("ERR_CONNECTION_", "ERR_ADDRESS_UNREACHABLE", "ERR_EMPTY_RESPONSE", "ERR_TIMED_OUT",
+      "Timeout "),
+     "This website did not respond. It may be down, or refusing connections from this "
+     "server. Try again later, and check that it opens in a normal browser."),
+)
+
+
+def _homepage_failure(exc: Exception) -> tuple[str, bool]:
+    """(summary, requires_custom_work) for a homepage that would not open."""
+    text = str(exc)
+    for markers, summary in _HOMEPAGE_FAILURES:
+        if any(marker in text for marker in markers):
+            return summary, False
+    return (
+        "The website could not be opened — it may be blocking automated browsers, or "
+        "be temporarily unavailable. This site needs a custom scraper build."
+    ), True
+
+
+def _probe_after_redirects(page, heuristics) -> dict:
+    """Run the homepage probe, waiting out a script redirect. A redirect that
+    fires during the probe destroys its context, and that is a healthy site, not
+    one that failed to open."""
+    for attempt in range(3):
+        try:
+            return page.evaluate(PROBE_JS, list(heuristics.detail_segments))
+        except Exception as exc:
+            if attempt == 2 or "context was destroyed" not in str(exc):
+                raise
+            wait_for_stable(page, heuristics)
+    raise AssertionError("unreachable")
+
+
 def _report_throttled(ctx: DiscoveryContext, result) -> bool:
     """If the site refused its own scripts/data calls during the run, say so
     instead of blaming the layout, and return True. A page whose inventory
@@ -430,14 +474,11 @@ class DiscoveryCoordinator:
                         ctx.timer.incr("navigations")
                         wait_for_stable(page, h)
                         ctx.timer.incr("waits")
-                        home = page.evaluate(PROBE_JS, list(h.detail_segments))
+                        home = _probe_after_redirects(page, h)
                 except Exception as exc:
-                    result.summary = (
-                        "The website could not be opened — it may be blocking automated "
-                        "browsers, or be temporarily unavailable. This site needs a custom "
-                        "scraper build."
-                    )
-                    ctx.report.add_note(f"Could not load homepage: {type(exc).__name__}")
+                    result.summary, result.requires_custom_work = _homepage_failure(exc)
+                    detail = str(exc).splitlines()[0][:200] if str(exc) else ""
+                    ctx.report.add_note(f"Could not load homepage: {type(exc).__name__}: {detail}")
                     ctx.report.decision = DecisionReport(chosen_key=None, rationale="homepage unreachable")
                     return
                 self.progress("explore", 1, 4)
