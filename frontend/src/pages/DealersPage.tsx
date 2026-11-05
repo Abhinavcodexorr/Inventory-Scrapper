@@ -13,6 +13,7 @@ import {
   ListItemIcon,
   Menu,
   MenuItem,
+  Pagination,
   ToggleButton,
   ToggleButtonGroup,
   Tooltip,
@@ -51,8 +52,9 @@ import {
   StatusChip,
   Surface,
   type Column,
+  type SortState,
 } from '../components/ui';
-import { useAllRuns, useDealerList } from '../hooks/useDealers';
+import { useDashboardSummary, useDealerPage, useSuccessTally } from '../hooks/useDealers';
 import { useDebouncedValue } from '../utils/useDebouncedValue';
 import { useTokens } from '../theme/useTokens';
 import { useAppSettings } from '../theme/settings';
@@ -88,45 +90,29 @@ export function DealersPage() {
   useEffect(() => setPage(0), [debouncedSearch, status, provider]);
 
   const providersQ = useQuery({ queryKey: ['providers'], queryFn: listProviders });
-  const dealersQ = useDealerList();
+  const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' });
+  useEffect(() => setPage(0), [sort]);
 
-  // Success rate per dealership. Shares its cache with the dashboard and jobs
-  // pages, so arriving from either of those costs no extra requests.
-  const runsAgg = useAllRuns(dealersQ.data, 10, Boolean(dealersQ.data?.length));
+  const pageSize = settings.pageSize;
+  const dealersQ = useDealerPage({
+    q: debouncedSearch.trim() || undefined,
+    active: status ? status === 'active' : undefined,
+    provider: provider || undefined,
+    sort: sort.key,
+    order: sort.dir,
+    limit: pageSize,
+    offset: page * pageSize,
+  });
+  const rows = useMemo(() => dealersQ.data?.items ?? [], [dealersQ.data]);
+  const total = dealersQ.data?.total ?? 0;
+  const summary = useDashboardSummary().data;
 
-  const successByDealer = useMemo(() => {
-    const tally = new Map<number, { ok: number; total: number }>();
-    for (const run of runsAgg.runs) {
-      if (run.status === 'running') continue;
-      const entry = tally.get(run.dealer_id) ?? { ok: 0, total: 0 };
-      entry.total += 1;
-      if (isRunSuccess(run.status)) entry.ok += 1;
-      tally.set(run.dealer_id, entry);
-    }
-    return tally;
-  }, [runsAgg.runs]);
+  const rowIds = useMemo(() => rows.map((d) => d.id), [rows]);
+  const successByDealer = useSuccessTally(rowIds, isRunSuccess);
 
   useEffect(() => {
     if (dealersQ.isError) enqueueSnackbar(getErrorMessage(dealersQ.error), { variant: 'error' });
   }, [dealersQ.isError, dealersQ.error, enqueueSnackbar]);
-
-  // Filtering happens client-side: the dealer list is small and already cached,
-  // so this keeps typing instant and avoids a request per keystroke.
-  const filtered = useMemo(() => {
-    const q = debouncedSearch.trim().toLowerCase();
-    return (dealersQ.data ?? []).filter((d) => {
-      if (status === 'active' && !d.active) return false;
-      if (status === 'inactive' && d.active) return false;
-      if (provider && d.website_provider !== provider) return false;
-      if (!q) return true;
-      return (
-        d.name.toLowerCase().includes(q) ||
-        d.base_url.toLowerCase().includes(q) ||
-        (d.city ?? '').toLowerCase().includes(q) ||
-        (d.website_provider ?? '').toLowerCase().includes(q)
-      );
-    });
-  }, [dealersQ.data, debouncedSearch, status, provider]);
 
   const activeFilterCount = [debouncedSearch, status, provider].filter(Boolean).length;
 
@@ -234,6 +220,7 @@ export function DealersPage() {
         key: 'location',
         header: 'Location',
         width: 150,
+        sortable: false,
         value: (d) => [d.city, d.province].filter(Boolean).join(', '),
         render: (d) => (
           <Typography variant="body2" color={d.city ? 'text.primary' : 'text.disabled'}>
@@ -257,6 +244,7 @@ export function DealersPage() {
         key: 'success',
         header: 'Success rate',
         width: 130,
+        sortable: false,
         hint: 'Share of recent runs that completed successfully',
         value: (d) => {
           const s = successByDealer.get(d.id);
@@ -328,7 +316,7 @@ export function DealersPage() {
     [successByDealer, syncM],
   );
 
-  const showEmptyState = !dealersQ.isLoading && filtered.length === 0;
+  const showEmptyState = !dealersQ.isLoading && total === 0;
 
   return (
     <Box>
@@ -336,8 +324,8 @@ export function DealersPage() {
         title="Dealerships"
         description="Every website the platform scrapes for inventory. Add a source, verify its scraper, then let it sync automatically."
         eyebrow={
-          dealersQ.data
-            ? `${dealersQ.data.length} source${dealersQ.data.length === 1 ? '' : 's'} · ${dealersQ.data.filter((d) => d.active).length} active`
+          summary
+            ? `${summary.dealers_total.toLocaleString()} source${summary.dealers_total === 1 ? '' : 's'} · ${summary.dealers_active.toLocaleString()} active`
             : undefined
         }
         actions={
@@ -398,7 +386,7 @@ export function DealersPage() {
 
       {showEmptyState ? (
         <SectionCard>
-          {(dealersQ.data ?? []).length === 0 ? (
+          {activeFilterCount === 0 ? (
             <EmptyState
               art="dealers"
               title="No Dealers Yet"
@@ -430,6 +418,7 @@ export function DealersPage() {
           )}
         </SectionCard>
       ) : view === 'grid' ? (
+        <>
         <Box
           sx={{
             display: 'grid',
@@ -443,7 +432,7 @@ export function DealersPage() {
         >
           {dealersQ.isLoading
             ? Array.from({ length: 6 }).map((_, i) => <DealerCardSkeleton key={i} />)
-            : filtered.map((dealer, i) => (
+            : rows.map((dealer, i) => (
                 <AppearIn key={dealer.id} index={i}>
                   <DealerCard
                     dealer={dealer}
@@ -456,16 +445,30 @@ export function DealersPage() {
                 </AppearIn>
               ))}
         </Box>
+        {total > pageSize && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
+            <Pagination
+              count={Math.ceil(total / pageSize)}
+              page={page + 1}
+              onChange={(_, next) => setPage(next - 1)}
+              shape="rounded"
+            />
+          </Box>
+        )}
+        </>
       ) : (
         <SectionCard flush>
           <DataTable
-            rows={filtered}
+            rows={rows}
+            rowCount={total}
+            sort={sort}
+            onSortChange={setSort}
             columns={columns}
             getRowId={(d) => d.id}
             loading={dealersQ.isLoading}
             onRowClick={(d) => navigate(`/dealers/${d.id}`)}
             page={page}
-            pageSize={settings.pageSize}
+            pageSize={pageSize}
             onPageChange={setPage}
             pageSizeOptions={[25, 50, 100]}
             storageKey="dealers"
@@ -561,12 +564,6 @@ export function DealersPage() {
         )}
       </ConfirmDialog>
 
-      {runsAgg.isFetching && (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2, color: 'text.disabled' }}>
-          <CircularProgress size={12} />
-          <Typography variant="caption">Loading run history…</Typography>
-        </Box>
-      )}
     </Box>
   );
 }

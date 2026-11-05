@@ -6,13 +6,14 @@ import StorefrontRoundedIcon from '@mui/icons-material/StorefrontRounded';
 import DirectionsCarFilledRoundedIcon from '@mui/icons-material/DirectionsCarFilledRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
 import FileDownloadRoundedIcon from '@mui/icons-material/FileDownloadRounded';
-import { listDealers } from '../api/dealers';
+import { listDealers, listRecentRuns } from '../api/dealers';
 import { listVehicles } from '../api/vehicles';
 import { getErrorMessage } from '../api/client';
 import { AppearIn, PageHeader, SectionCard, SoftIconTile, Surface } from '../components/ui';
-import { useAllRuns, useDealerList } from '../hooks/useDealers';
+import { useDashboardSummary } from '../hooks/useDealers';
 import { downloadCsv, stampedFilename } from '../utils/csv';
 import { formatDate } from '../utils/format';
+import type { RunWithDealer } from '../types';
 
 interface ReportDef {
   id: string;
@@ -24,6 +25,7 @@ interface ReportDef {
 }
 
 const PAGE_SIZE = 500;
+const MAX_EXPORTED_RUNS = 20_000;
 
 /**
  * Every export here re-fetches fresh data at click time rather than reusing
@@ -35,8 +37,7 @@ export function ReportsPage() {
   const { enqueueSnackbar } = useSnackbar();
   const [runningId, setRunningId] = useState<string | null>(null);
 
-  const dealersQ = useDealerList();
-  const runsAgg = useAllRuns(dealersQ.data, 30, Boolean(dealersQ.data?.length));
+  const lastRunAt = useDashboardSummary().data?.last_sync_at;
 
   async function withRunning(id: string, fn: () => Promise<void>) {
     setRunningId(id);
@@ -108,12 +109,12 @@ export function ReportsPage() {
   }
 
   async function exportRuns() {
-    const dealers = await listDealers();
-    if (dealers.length === 0) {
-      enqueueSnackbar('No dealerships to export runs for', { variant: 'info' });
-      return;
+    const rows: RunWithDealer[] = [];
+    while (rows.length < MAX_EXPORTED_RUNS) {
+      const { runs } = await listRecentRuns({ limit: 500, offset: rows.length });
+      rows.push(...runs);
+      if (runs.length < 500) break;
     }
-    const rows = runsAgg.runs;
     if (rows.length === 0) {
       enqueueSnackbar('No scrape runs recorded yet', { variant: 'info' });
       return;
@@ -160,12 +161,6 @@ export function ReportsPage() {
       run: exportRuns,
     },
   ];
-
-  const lastRunAt = dealersQ.data?.reduce<string | null>((latest, d) => {
-    if (!d.last_synced_at) return latest;
-    if (!latest || new Date(d.last_synced_at) > new Date(latest)) return d.last_synced_at;
-    return latest;
-  }, null);
 
   return (
     <Box>

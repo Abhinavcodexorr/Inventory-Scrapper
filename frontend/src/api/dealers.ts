@@ -10,8 +10,7 @@ import type {
   SyncCancel,
   SyncJob,
   SyncJobStatus,
-  SyncRun,
-} from "../types";
+  SyncRun, RunWithDealer } from "../types";
 
 const DISCOVERY_POLL_MS = 2000;
 /** Discovery server budget is 300s; allow headroom for queue + finalize. */
@@ -115,6 +114,85 @@ export interface DealerListParams {
   active?: boolean;
   provider?: string;
   q?: string;
+  ids?: string;
+  sort?: string;
+  order?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
+
+/** One page of dealers plus how many match in total. */
+export async function listDealersPage(params: DealerListParams): Promise<{ items: Dealer[]; total: number }> {
+  const res = await api.get<Dealer[]>('/api/dealers', { params });
+  return { items: res.data, total: Number(res.headers['x-total-count'] ?? res.data.length) };
+}
+
+export interface DealerMatch {
+  id: number;
+  name: string;
+  base_url: string;
+}
+
+/** The dealer already using this website, if any. */
+export async function lookupWebsite(url: string, excludeId?: number): Promise<DealerMatch | null> {
+  const { data } = await api.get<DealerMatch | null>('/api/dealers/lookup', {
+    params: { url, exclude_id: excludeId },
+  });
+  return data;
+}
+
+/** A proven dealer whose settings a new dealer on this provider can reuse. */
+export async function getProviderTemplate(provider: string): Promise<Dealer | null> {
+  const { data } = await api.get<Dealer | null>('/api/dealers/template', { params: { provider } });
+  return data;
+}
+
+export interface RecentRunParams {
+  limit?: number;
+  offset?: number;
+  status?: string;
+  dealer_id?: number;
+  q?: string;
+}
+
+export async function listRecentRuns(
+  params: RecentRunParams,
+): Promise<{ runs: RunWithDealer[]; total: number }> {
+  const res = await api.get<RunWithDealer[]>('/api/dealers/runs', { params });
+  return { runs: res.data, total: Number(res.headers['x-total-count'] ?? res.data.length) };
+}
+
+export interface RunStats {
+  sampled: number;
+  running: number;
+  completed: number;
+  failed: number;
+  success_rate: number;
+  avg_duration_seconds: number;
+}
+
+export async function getRunStats(): Promise<RunStats> {
+  const { data } = await api.get<RunStats>('/api/dealers/runs/stats');
+  return data;
+}
+
+/** Each listed dealer's newest run statuses, keyed by dealer id. */
+export async function getLatestRunStatuses(ids: number[]): Promise<Record<string, string[]>> {
+  const { data } = await api.get<Record<string, string[]>>('/api/dealers/runs/latest-statuses', {
+    params: { ids: ids.join(',') },
+  });
+  return data;
+}
+
+export interface SyncAllResult {
+  queued: number;
+  already_running: number;
+  skipped_no_settings: number;
+}
+
+export async function syncAllDealers(): Promise<SyncAllResult> {
+  const { data } = await api.post<SyncAllResult>('/api/dealers/sync-all');
+  return data;
 }
 
 export async function listDealers(

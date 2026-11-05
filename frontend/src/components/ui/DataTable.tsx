@@ -410,7 +410,15 @@ export function DataTable<T>({
                     key={id}
                     hover={false}
                     tabIndex={onRowClick ? 0 : -1}
-                    onClick={onRowClick ? () => onRowClick(row) : undefined}
+                    onClick={
+                      onRowClick
+                        ? () => {
+                            // A drag that selects text also ends in a click on the row.
+                            if (window.getSelection()?.isCollapsed === false) return;
+                            onRowClick(row);
+                          }
+                        : undefined
+                    }
                     onKeyDown={
                       onRowClick
                         ? (e) => {

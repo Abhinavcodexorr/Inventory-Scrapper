@@ -6,8 +6,8 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select, func, delete, update
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from sqlalchemy import select, func, delete, or_, update
 from sqlalchemy.orm import Session
 
 from dealer_scraper.adapters.registry import _host_of as _registry_host
@@ -38,6 +38,7 @@ from worker.dispatch import (
 from ..deps import get_db
 from ..schemas import (
     DealerCreate,
+    DealerMatchOut,
     DealerOut,
     DealerUpdate,
     DiscoverIn,
@@ -46,9 +47,12 @@ from ..schemas import (
     DiscoveryOut,
     DiscoveryRunStatusOut,
     DiscoveryRunSummaryOut,
+    RunStatsOut,
+    RunWithDealerOut,
     SiteCompatibilityOut,
     SiteCompatibilityReportOut,
     SiteCompatibilitySummaryOut,
+    SyncAllOut,
     SyncCancelOut,
     SyncJobOut,
     SyncJobStatusOut,
@@ -265,13 +269,33 @@ def _reject_identity_conflict_or_422(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=conflict)
 
 
+_DEALER_SORTS = {
+    "name": Dealer.name,
+    "website_provider": Dealer.website_provider,
+    "inventory_count": Dealer.inventory_count,
+    "last_sync_duration_seconds": Dealer.last_sync_duration_seconds,
+    "last_synced_at": Dealer.last_synced_at,
+    "active": Dealer.active,
+}
+
+
+def _parse_ids(ids: str) -> list[int]:
+    try:
+        return [int(part) for part in ids.split(",") if part.strip()][:500]
+    except ValueError:
+        raise HTTPException(status_code=422, detail="ids must be comma-separated integers") from None
+
+
 @router.get("", response_model=list[DealerOut])
 def list_dealers(
     response: Response,
     db: Session = Depends(get_db),
     active: bool | None = Query(None, description="Filter by active flag"),
     provider: str | None = Query(None, description="Filter by website_provider"),
-    q: str | None = Query(None, description="Search by name (case-insensitive)"),
+    q: str | None = Query(None, description="Search name, website, city or provider"),
+    ids: str | None = Query(None, description="Comma-separated dealer ids to return"),
+    sort: str = Query("name", description=f"One of: {', '.join(_DEALER_SORTS)}"),
+    order: str = Query("asc", pattern="^(asc|desc)$"),
     limit: int | None = Query(None, ge=1, le=500, description="Page size. Omit for all."),
     offset: int = Query(0, ge=0, description="Rows to skip. Use with limit."),
 ):
@@ -288,15 +312,22 @@ def list_dealers(
         filters.append(Dealer.active.is_(active))
     if provider:
         filters.append(Dealer.website_provider == provider)
+    if ids is not None:
+        filters.append(Dealer.id.in_(_parse_ids(ids)))
     if q:
-        filters.append(Dealer.name.ilike(f"%{q}%"))
+        filters.append(or_(*(column.icontains(q, autoescape=True) for column in (
+            Dealer.name, Dealer.base_url, Dealer.city, Dealer.website_provider))))
 
     total = db.execute(
         select(func.count()).select_from(Dealer).where(*filters)
     ).scalar_one()
     response.headers["X-Total-Count"] = str(total)
 
-    stmt = select(Dealer).where(*filters).order_by(Dealer.name)
+    column = _DEALER_SORTS.get(sort, Dealer.name)
+    direction = column.desc() if order == "desc" else column.asc()
+    # NULLs last either way, and id breaks ties so pages never overlap.
+    stmt = (select(Dealer).where(*filters)
+            .order_by(column.is_(None), direction, Dealer.id))
     if limit is not None:
         stmt = stmt.limit(limit).offset(offset)
     elif offset:
@@ -306,10 +337,7 @@ def list_dealers(
 
 @router.post("", response_model=DealerOut, status_code=status.HTTP_201_CREATED)
 def create_dealer(payload: DealerCreate, db: Session = Depends(get_db)):
-    existing = db.execute(
-        select(Dealer).where(Dealer.base_url == payload.base_url)
-    ).scalar_one_or_none()
-    if existing:
+    if _find_same_site(db, payload.base_url):
         raise HTTPException(status_code=409, detail="A dealer with this base_url already exists")
 
     fields = payload.model_dump()
@@ -616,6 +644,149 @@ def force_finalize_discovery_run(
     log.info("Force-finalized discovery run %s (was %s)", run_id, run.status)
 
     return discovery_run_status(run_id, include_report=False, db=db)
+
+
+def _site_key(url: str | None) -> str | None:
+    """Identity of a website: the scheme, "www." and a trailing slash don't change
+    the site, while a path can (dealers sharing a host)."""
+    value = (url or "").strip()
+    if not value:
+        return None
+    try:
+        parts = urlsplit(value if "://" in value else f"https://{value}")
+        host = (parts.hostname or "").lower().removeprefix("www.")
+    except ValueError:
+        return None
+    return f"{host}{parts.path.rstrip('/')}" if host else None
+
+
+def _find_same_site(db: Session, url: str | None, exclude_id: int | None = None):
+    """The dealer already registered for this website, if any."""
+    key = _site_key(url)
+    if not key:
+        return None
+    host = key.split("/", 1)[0]
+    rows = db.execute(
+        select(Dealer.id, Dealer.name, Dealer.base_url)
+        .where(Dealer.base_url.icontains(host, autoescape=True))
+    ).all()
+    return next((r for r in rows if r.id != exclude_id and _site_key(r.base_url) == key), None)
+
+
+@router.get("/lookup", response_model=DealerMatchOut | None)
+def lookup_website(
+    url: str = Query(..., max_length=500),
+    exclude_id: int | None = Query(None, description="Ignore this dealer (the one being edited)"),
+    db: Session = Depends(get_db),
+):
+    """Which dealer already uses this website, or null."""
+    return _find_same_site(db, url, exclude_id)
+
+
+@router.get("/template", response_model=DealerOut | None)
+def provider_template(provider: str = Query(..., max_length=100), db: Session = Depends(get_db)):
+    """A proven dealer whose settings a new dealer on this provider can reuse, or null."""
+    return _reusable_config_for(db, provider, None)
+
+
+@router.get("/runs", response_model=list[RunWithDealerOut])
+def recent_runs(
+    response: Response,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    status_filter: str | None = Query(None, alias="status"),
+    dealer_id: int | None = Query(None),
+    q: str | None = Query(None, description="Search by dealer name"),
+    db: Session = Depends(get_db),
+):
+    """Latest scrape runs across every dealer, newest first."""
+    filters = []
+    if status_filter:
+        filters.append(ScrapeRun.status == status_filter)
+    if dealer_id is not None:
+        filters.append(ScrapeRun.dealer_id == dealer_id)
+    if q:
+        filters.append(Dealer.name.icontains(q, autoescape=True))
+    base = select(ScrapeRun, Dealer.name, Dealer.active).join(
+        Dealer, Dealer.id == ScrapeRun.dealer_id).where(*filters)
+    response.headers["X-Total-Count"] = str(db.execute(
+        select(func.count()).select_from(base.subquery())).scalar_one())
+    rows = db.execute(base.order_by(ScrapeRun.id.desc()).limit(limit).offset(offset)).all()
+    return [RunWithDealerOut.model_validate(run).model_copy(
+        update={"dealer_name": name, "dealer_active": active}) for run, name, active in rows]
+
+
+#: Fleet-wide run stats read the newest runs rather than the whole table, which
+#: grows by one row per dealer per day.
+_RUN_STATS_SAMPLE = 5000
+
+
+@router.get("/runs/stats", response_model=RunStatsOut)
+def recent_run_stats(db: Session = Depends(get_db)):
+    """Totals behind the Scraping Jobs cards, from the newest runs."""
+    rows = db.execute(
+        select(ScrapeRun.status, ScrapeRun.started_at, ScrapeRun.finished_at)
+        .order_by(ScrapeRun.id.desc()).limit(_RUN_STATS_SAMPLE)
+    ).all()
+    finished = [r for r in rows if r.status != "running"]
+    completed = sum(r.status == "completed" for r in finished)
+    durations = [(r.finished_at - r.started_at).total_seconds()
+                 for r in finished if r.finished_at and r.started_at]
+    return RunStatsOut(
+        sampled=len(rows),
+        running=len(rows) - len(finished),
+        completed=completed,
+        failed=sum(r.status == "failed" for r in finished),
+        success_rate=completed / len(finished) * 100 if finished else 0,
+        avg_duration_seconds=sum(durations) / len(durations) if durations else 0,
+    )
+
+
+@router.get("/runs/latest-statuses", response_model=dict[int, list[str]])
+def latest_run_statuses(
+    ids: str = Query(..., description="Comma-separated dealer ids"),
+    per_dealer: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    """Each listed dealer's newest run statuses, for the success-rate column."""
+    position = func.row_number().over(
+        partition_by=ScrapeRun.dealer_id, order_by=ScrapeRun.id.desc()).label("position")
+    ranked = (select(ScrapeRun.dealer_id, ScrapeRun.status, position)
+              .where(ScrapeRun.dealer_id.in_(_parse_ids(ids))).subquery())
+    out: dict[int, list[str]] = {}
+    for dealer_id, run_status in db.execute(
+        select(ranked.c.dealer_id, ranked.c.status).where(ranked.c.position <= per_dealer)
+    ):
+        out.setdefault(dealer_id, []).append(run_status)
+    return out
+
+
+def _dispatch_active(dealer_ids: list[tuple[int, str]]) -> None:
+    for dealer_id, base_url in dealer_ids:
+        try:
+            dispatch_sync(dealer_id, base_url)
+        except Exception:  # one dealer must not stop the rest of the fleet
+            log.exception("Could not dispatch sync for dealer %s", dealer_id)
+
+
+@router.post("/sync-all", response_model=SyncAllOut, status_code=status.HTTP_202_ACCEPTED)
+def sync_all(background: BackgroundTasks, db: Session = Depends(get_db)):
+    """Start a scrape for every active dealer that isn't already running.
+
+    Answers right away and dispatches after responding: one request per dealer
+    from the browser does not survive a fleet this size.
+    """
+    active = db.execute(
+        select(Dealer.id, Dealer.base_url, Dealer.scrape_config).where(Dealer.active.is_(True))
+    ).all()
+    # Same "abandoned rows don't count" rule as _running_run, for the whole fleet.
+    running = {dealer_id for dealer_id in db.execute(
+        select(ScrapeRun.dealer_id).where(ScrapeRun.status == "running").distinct()).scalars()
+        if _running_run(db, dealer_id) is not None}
+    targets = [(d.id, d.base_url) for d in active if d.id not in running and d.scrape_config]
+    background.add_task(_dispatch_active, targets)
+    return SyncAllOut(queued=len(targets), already_running=len(running & {d.id for d in active}),
+                      skipped_no_settings=sum(not d.scrape_config for d in active))
 
 
 @router.get("/providers/list", response_model=list[str])

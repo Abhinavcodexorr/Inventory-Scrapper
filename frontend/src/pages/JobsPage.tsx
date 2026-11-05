@@ -27,15 +27,16 @@ import {
   Surface,
   type Column,
 } from '../components/ui';
-import { useAllRuns, useDealerList } from '../hooks/useDealers';
+import { useDashboardSummary, useRecentRuns, useRunStats } from '../hooks/useDealers';
+import { DealerFilter } from '../components/DealerFilter';
+import { useDebouncedValue } from '../utils/useDebouncedValue';
 import { useNow } from '../hooks/useNow';
 import { useRunScraperAction } from '../layout/runScraperContext';
 import { chartSeries } from '../theme/tokens';
 import { formatDate, formatDuration, formatRelative, percent } from '../utils/format';
-import { isRunSuccess } from '../utils/runStatus';
 import { summarizeRun } from '../utils/runSummary';
+import type { RunWithDealer } from '../types';
 
-const RUNS_PER_DEALER = 30;
 const LIVE_POLL_MS = 3000;
 
 export function JobsPage() {
@@ -51,45 +52,35 @@ export function JobsPage() {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
 
-  const dealersQ = useDealerList();
-  const runsAgg = useAllRuns(dealersQ.data, RUNS_PER_DEALER, Boolean(dealersQ.data?.length), LIVE_POLL_MS);
+  const debouncedSearch = useDebouncedValue(search);
+  useEffect(() => setPage(0), [debouncedSearch, status, dealerId]);
+
+  const runsAgg = useRecentRuns({
+    limit: pageSize,
+    offset: page * pageSize,
+    status: status || undefined,
+    dealerId: dealerId ? Number(dealerId) : undefined,
+    q: debouncedSearch.trim() || undefined,
+    livePollMs: LIVE_POLL_MS,
+  });
+  const runningAgg = useRecentRuns({ limit: 50, status: 'running', livePollMs: LIVE_POLL_MS });
+  const statsQ = useRunStats(LIVE_POLL_MS);
+  const summaryQ = useDashboardSummary();
 
   useEffect(() => {
     if (runsAgg.isError) enqueueSnackbar('Could not load scrape run history', { variant: 'error' });
   }, [runsAgg.isError, enqueueSnackbar]);
 
-  const running = useMemo(() => runsAgg.runs.filter((r) => r.status === 'running'), [runsAgg.runs]);
+  const running = runningAgg.runs;
   const now = useNow(1000, running.length > 0);
 
-  const stats = useMemo(() => {
-    const finished = runsAgg.runs.filter((r) => r.status !== 'running');
-    const succeeded = finished.filter((r) => isRunSuccess(r.status)).length;
-    const failed = finished.filter((r) => r.status === 'failed').length;
-    const durations = finished
-      .filter((r) => r.finished_at)
-      .map((r) => (new Date(r.finished_at!).getTime() - new Date(r.started_at).getTime()) / 1000);
-    return {
-      running: running.length,
-      completed: succeeded,
-      failed,
-      successRate: finished.length ? percent(succeeded, finished.length) : 0,
-      avgDuration: durations.length ? durations.reduce((a, b) => a + b, 0) / durations.length : 0,
-    };
-  }, [runsAgg.runs, running.length]);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return runsAgg.runs.filter((r) => {
-      if (status && r.status !== status) return false;
-      if (dealerId && String(r.dealer_id) !== dealerId) return false;
-      if (q && !r.dealer_name.toLowerCase().includes(q)) return false;
-      return true;
-    });
-  }, [runsAgg.runs, search, status, dealerId]);
-
-  // Filters and live polling can shrink the list, so never point past its end.
-  const lastPage = Math.max(0, Math.ceil(filtered.length / pageSize) - 1);
-  const currentPage = Math.min(page, lastPage);
+  const stats = {
+    running: statsQ.data?.running ?? running.length,
+    completed: statsQ.data?.completed ?? 0,
+    failed: statsQ.data?.failed ?? 0,
+    successRate: statsQ.data?.success_rate ?? 0,
+    avgDuration: statsQ.data?.avg_duration_seconds ?? 0,
+  };
 
   const activeFilterCount = [search, status, dealerId].filter(Boolean).length;
 
@@ -111,11 +102,12 @@ export function JobsPage() {
     onSuccess: (res) => {
       enqueueSnackbar(res.detail, { variant: 'info' });
       qc.invalidateQueries({ queryKey: ['dealer', res.dealer_id, 'runs'] });
+      qc.invalidateQueries({ queryKey: ['dealers', 'runs'] });
     },
     onError: (e) => enqueueSnackbar(getErrorMessage(e), { variant: 'error' }),
   });
 
-  const columns: Column<(typeof runsAgg.runs)[number]>[] = useMemo(
+  const columns: Column<RunWithDealer>[] = useMemo(
     () => [
       {
         key: 'dealer_name',
@@ -362,23 +354,18 @@ export function JobsPage() {
             { value: 'cancelled', label: 'Cancelled' },
           ]}
         />
-        <FilterSelect
-          label="Dealer"
-          value={dealerId}
-          onChange={setDealerId}
-          width={180}
-          options={(dealersQ.data ?? []).map((d) => ({ value: String(d.id), label: d.name }))}
-        />
+        <DealerFilter value={dealerId} onChange={setDealerId} width={220} />
       </FilterBar>
 
       <SectionCard flush>
         <DataTable
-          rows={filtered}
+          rows={runsAgg.runs}
+          rowCount={runsAgg.total}
           columns={columns}
           getRowId={(r) => r.id}
           loading={runsAgg.isLoading}
           onRowClick={(r) => navigate(`/dealers/${r.dealer_id}`)}
-          page={currentPage}
+          page={page}
           pageSize={pageSize}
           onPageChange={setPage}
           onPageSizeChange={(size) => {
@@ -390,7 +377,7 @@ export function JobsPage() {
           rowNoun="runs"
           maxHeight="max(520px, calc(100vh - 300px))"
           empty={
-            (dealersQ.data ?? []).length === 0 ? (
+            summaryQ.data?.dealers_total === 0 ? (
               <EmptyState
                 art="dealers"
                 title="No dealerships to monitor"

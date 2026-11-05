@@ -30,7 +30,7 @@ export function NotificationsMenu() {
   const theme = useTheme();
   const tk = useTokens();
   const navigate = useNavigate();
-  const statsQ = useDealerStats();
+  const statsQ = useDealerStats({ attention: true, limit: 30 });
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
 
   const alerts = useMemo<Alert[]>(() => {

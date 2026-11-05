@@ -225,6 +225,31 @@ export interface AuditLog {
   occurred_at: string;
 }
 
+/** A scrape run with the dealership it belongs to. */
+export interface RunWithDealer extends SyncRun {
+  dealer_name: string;
+  dealer_active: boolean;
+}
+
+/** One calendar day's inventory movement across the reporting dealers. */
+export interface DailyTotals {
+  date: string;
+  total: number;
+  added: number;
+  removed: number;
+  sold: number;
+  priceChanged: number;
+  dealers: number;
+}
+
+export interface InventoryShare {
+  top: { id: number; name: string; inventory_count: number }[];
+  total: number;
+  dealer_count: number;
+  rest_count: number;
+  rest_total: number;
+}
+
 export interface DealerStats {
   dealer_id: number;
   dealer_name: string;

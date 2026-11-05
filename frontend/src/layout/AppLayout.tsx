@@ -7,7 +7,7 @@ import { Topbar } from './Topbar';
 import { CommandPalette } from './CommandPalette';
 import { RunScraperContext } from './runScraperContext';
 import { ConfirmDialog } from '../components/ui';
-import { useDealerList } from '../hooks/useDealers';
+import { useDashboardSummary } from '../hooks/useDealers';
 import { useRunScraper } from '../hooks/useRunScraper';
 import { useAppSettings } from '../theme/settings';
 import { useTokens } from '../theme/useTokens';
@@ -24,13 +24,13 @@ export function AppLayout() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [runConfirmOpen, setRunConfirmOpen] = useState(false);
 
-  const dealersQ = useDealerList();
+  const summaryQ = useDashboardSummary();
   const runScraper = useRunScraper();
 
   const collapsed = !isMobile && settings.sidebarCollapsed;
   const sidebarWidth = collapsed ? layout.sidebarCollapsedWidth : layout.sidebarWidth;
 
-  const activeDealers = (dealersQ.data ?? []).filter((d) => d.active);
+  const activeCount = summaryQ.data?.dealers_active ?? 0;
 
   // ⌘K / Ctrl+K anywhere except while typing into a field.
   useEffect(() => {
@@ -178,22 +178,22 @@ export function AppLayout() {
         open={runConfirmOpen}
         title="Run scraper on all active dealerships?"
         description={
-          activeDealers.length === 0
+          activeCount === 0
             ? 'There are no active dealerships to sync. Activate at least one first.'
-            : `This dispatches a scrape for ${activeDealers.length} active dealership${activeDealers.length === 1 ? '' : 's'}. Runs already in progress are left alone.`
+            : `This dispatches a scrape for ${activeCount.toLocaleString()} active dealership${activeCount === 1 ? '' : 's'}. Runs already in progress are left alone.`
         }
-        confirmLabel={activeDealers.length === 0 ? 'Nothing to run' : 'Run scraper'}
+        confirmLabel={activeCount === 0 ? 'Nothing to run' : 'Run scraper'}
         loading={runScraper.isPending}
         onClose={() => setRunConfirmOpen(false)}
         onConfirm={() => {
-          if (activeDealers.length === 0) {
+          if (activeCount === 0) {
             setRunConfirmOpen(false);
             return;
           }
-          runScraper.mutate(activeDealers, { onSettled: () => setRunConfirmOpen(false) });
+          runScraper.mutate(undefined, { onSettled: () => setRunConfirmOpen(false) });
         }}
       >
-        {activeDealers.length > 0 && (
+        {activeCount > 0 && (
           <Typography variant="caption" color="text.secondary">
             Scrapes run in the background — you can keep working and watch progress on the Scraping Jobs page.
           </Typography>

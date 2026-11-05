@@ -12,7 +12,7 @@ import DarkModeRoundedIcon from '@mui/icons-material/DarkModeRounded';
 import LightModeRoundedIcon from '@mui/icons-material/LightModeRounded';
 import { ALL_NAV_ITEMS } from './navConfig';
 import { listVehicles } from '../api/vehicles';
-import { useDealerList } from '../hooks/useDealers';
+import { listDealers } from '../api/dealers';
 import { useDebouncedValue } from '../utils/useDebouncedValue';
 import { useTokens } from '../theme/useTokens';
 import { useAppSettings } from '../theme/settings';
@@ -52,7 +52,12 @@ export function CommandPalette({ open, onClose, onRunScraper }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
 
   const debounced = useDebouncedValue(query, 220);
-  const dealersQ = useDealerList();
+  const dealersQ = useQuery({
+    queryKey: ['dealers', 'palette', debounced],
+    queryFn: () => listDealers({ q: debounced, limit: 6 }),
+    enabled: open && debounced.trim().length >= 2,
+    staleTime: 30_000,
+  });
 
   const vehiclesQ = useQuery({
     queryKey: ['vehicles', 'palette', debounced],
@@ -121,10 +126,7 @@ export function CommandPalette({ open, onClose, onRunScraper }: Props) {
       run: () => go(item.to),
     }));
 
-    const dealers: Command[] = (dealersQ.data ?? [])
-      .filter((d) => matches(d.name) || matches(d.base_url) || matches(d.city ?? ''))
-      .slice(0, 6)
-      .map((d) => ({
+    const dealers: Command[] = (q ? (dealersQ.data ?? []) : []).map((d) => ({
         id: `dealer:${d.id}`,
         group: 'Dealerships',
         label: d.name,

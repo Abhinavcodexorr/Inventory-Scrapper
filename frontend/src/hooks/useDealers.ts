@@ -1,36 +1,57 @@
-import { useCallback, useMemo } from 'react';
-import { useQueries, useQuery } from '@tanstack/react-query';
-import { listDealerRuns, listDealers } from '../api/dealers';
-import { getDealerStats, getDealerTrend, getSummary } from '../api/dashboard';
+import { useMemo } from 'react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import {
+  getLatestRunStatuses,
+  getRunStats,
+  listDealers,
+  listDealersPage,
+  listRecentRuns,
+  type DealerListParams,
+} from '../api/dealers';
+import {
+  getDealerStats,
+  getFleetTrend,
+  getInventoryShare,
+  getSummary,
+  type DealerStatsParams,
+} from '../api/dashboard';
 import { useAppSettings } from '../theme/settings';
-import type { Dealer, DealerStats, Snapshot, SyncRun } from '../types';
+import type { DealerStats } from '../types';
 
-/** A sync run tagged with the dealership it belongs to. */
-export interface RunWithDealer extends SyncRun {
-  dealer_name: string;
-  dealer_active: boolean;
-}
-
-/** A daily snapshot tagged with its dealership. */
-export interface SnapshotWithDealer extends Snapshot {
-  dealer_id: number;
-  dealer_name: string;
-}
-
-/** Background refetch interval from user settings; `false` disables polling. */
 function useRefetchInterval(): number | false {
   const { settings } = useAppSettings();
   return settings.autoRefreshMs > 0 ? settings.autoRefreshMs : false;
 }
 
-/** Shared dealer list — one cache entry reused by every page and the palette. */
-export function useDealerList() {
+// The fleet can hold tens of thousands of dealers, so nothing here loads them
+// all: the server pages, searches and totals, and the browser holds one page.
+// Query keys start with 'dealers' or 'dashboard' so the existing invalidations
+// after a sync, edit or delete reach them.
+
+/** One page of dealers. The previous page stays on screen while the next loads. */
+export function useDealerPage(params: DealerListParams) {
   const refetchInterval = useRefetchInterval();
   return useQuery({
-    queryKey: ['dealers'],
-    queryFn: () => listDealers(),
+    queryKey: ['dealers', 'page', params],
+    queryFn: () => listDealersPage(params),
+    placeholderData: keepPreviousData,
     refetchInterval,
   });
+}
+
+/** Names for the dealers currently on screen. */
+export function useDealerNames(ids: readonly number[]) {
+  const unique = useMemo(() => [...new Set(ids)].sort((a, b) => a - b), [ids]);
+  const namesQ = useQuery({
+    queryKey: ['dealers', 'names', unique],
+    queryFn: () => listDealers({ ids: unique.join(','), limit: 500 }),
+    enabled: unique.length > 0,
+    placeholderData: keepPreviousData,
+  });
+  return useMemo(() => {
+    const names = new Map((namesQ.data ?? []).map((d) => [d.id, d.name]));
+    return (id: number) => names.get(id) ?? `Dealer #${id}`;
+  }, [namesQ.data]);
 }
 
 export function useDashboardSummary() {
@@ -38,136 +59,80 @@ export function useDashboardSummary() {
   return useQuery({ queryKey: ['dashboard', 'summary'], queryFn: getSummary, refetchInterval });
 }
 
-export function useDealerStats() {
+export function useDealerStats(params?: DealerStatsParams) {
   const refetchInterval = useRefetchInterval();
-  return useQuery({ queryKey: ['dashboard', 'dealers'], queryFn: getDealerStats, refetchInterval });
-}
-
-/**
- * Fan out the per-dealer runs endpoint and flatten the result into one feed.
- *
- * There is no aggregate runs endpoint, so this is the only way to build a
- * cross-dealer job view. Each dealer keeps its own cache entry, which means a
- * single dealer's sync invalidates just that slice rather than the whole feed.
- */
-export function useAllRuns(
-  dealers: readonly Dealer[] | undefined,
-  limit = 10,
-  enabled = true,
-  /** Poll interval while ANY run in that dealer's page is still `running`. */
-  livePollMs: number | false = false,
-) {
-  const list = useMemo(() => dealers ?? [], [dealers]);
-
-  const combine = useCallback(
-    (results: { data?: SyncRun[]; isPending: boolean; isFetching: boolean; isError: boolean }[]) => {
-      const runs: RunWithDealer[] = [];
-      results.forEach((res, i) => {
-        const dealer = list[i];
-        if (!dealer || !res.data) return;
-        res.data.forEach((run) =>
-          runs.push({ ...run, dealer_name: dealer.name, dealer_active: dealer.active }),
-        );
-      });
-      runs.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
-      return {
-        runs,
-        isLoading: results.length > 0 && results.some((r) => r.isPending),
-        isFetching: results.some((r) => r.isFetching),
-        isError: results.length > 0 && results.every((r) => r.isError),
-      };
-    },
-    [list],
-  );
-
-  return useQueries({
-    queries: list.map((d) => ({
-      queryKey: ['dealer', d.id, 'runs', limit] as const,
-      queryFn: () => listDealerRuns(d.id, limit),
-      enabled,
-      staleTime: 15_000,
-      refetchInterval: livePollMs
-        ? (query: { state: { data?: SyncRun[] } }) =>
-            query.state.data?.some((r) => r.status === 'running') ? livePollMs : false
-        : undefined,
-    })),
-    combine,
+  return useQuery({
+    queryKey: ['dashboard', 'dealers', params],
+    queryFn: () => getDealerStats(params),
+    refetchInterval,
   });
 }
 
-/**
- * Fan out the 30-day snapshot endpoint across dealers to build platform-wide
- * inventory trends. Snapshots are written once per day, so they cache well.
- */
-export function useAllTrends(dealers: readonly Dealer[] | undefined, days = 30, enabled = true) {
-  const list = useMemo(() => dealers ?? [], [dealers]);
+export function useInventoryShare(top: number) {
+  return useQuery({ queryKey: ['dashboard', 'share', top], queryFn: () => getInventoryShare(top) });
+}
 
-  const combine = useCallback(
-    (results: { data?: Snapshot[]; isPending: boolean; isFetching: boolean }[]) => {
-      const snapshots: SnapshotWithDealer[] = [];
-      results.forEach((res, i) => {
-        const dealer = list[i];
-        if (!dealer || !res.data) return;
-        res.data.forEach((snap) =>
-          snapshots.push({ ...snap, dealer_id: dealer.id, dealer_name: dealer.name }),
-        );
-      });
-      return {
-        snapshots,
-        isLoading: results.length > 0 && results.some((r) => r.isPending),
-        isFetching: results.some((r) => r.isFetching),
-      };
-    },
-    [list],
-  );
+interface RecentRunsOptions {
+  limit?: number;
+  offset?: number;
+  status?: string;
+  dealerId?: number;
+  q?: string;
+  /** Poll interval while any listed run is still `running`. */
+  livePollMs?: number;
+}
 
-  return useQueries({
-    queries: list.map((d) => ({
-      queryKey: ['dashboard', 'trend', d.id, days] as const,
-      queryFn: () => getDealerTrend(d.id, days),
-      enabled,
-      staleTime: 5 * 60_000,
-    })),
-    combine,
+/** The newest scrape runs across every dealer, or one. */
+export function useRecentRuns({ limit = 50, offset = 0, status, dealerId, q, livePollMs }: RecentRunsOptions = {}) {
+  const query = useQuery({
+    queryKey: ['dealers', 'runs', { limit, offset, status, dealerId, q }],
+    queryFn: () => listRecentRuns({ limit, offset, status, dealer_id: dealerId, q }),
+    placeholderData: keepPreviousData,
+    staleTime: 15_000,
+    refetchInterval: livePollMs
+      ? (q2) => (q2.state.data?.runs.some((r) => r.status === 'running') ? livePollMs : false)
+      : undefined,
   });
+  return {
+    runs: query.data?.runs ?? [],
+    total: query.data?.total ?? 0,
+    isLoading: query.isLoading,
+    isFetching: query.isFetching,
+    isError: query.isError,
+  };
 }
 
-/**
- * Collapse per-dealer snapshots into one series per calendar date.
- * Dealers are only counted on dates they actually reported, so a dealer added
- * mid-window doesn't create a phantom dip in the totals.
- */
-export interface DailyTotals {
-  date: string;
-  total: number;
-  added: number;
-  removed: number;
-  sold: number;
-  priceChanged: number;
-  dealers: number;
+export function useRunStats(refetchInterval?: number) {
+  return useQuery({ queryKey: ['dealers', 'run-stats'], queryFn: getRunStats, refetchInterval });
 }
 
-export function aggregateByDate(snapshots: readonly SnapshotWithDealer[]): DailyTotals[] {
-  const byDate = new Map<string, DailyTotals>();
-  for (const s of snapshots) {
-    const entry = byDate.get(s.snapshot_date) ?? {
-      date: s.snapshot_date,
-      total: 0,
-      added: 0,
-      removed: 0,
-      sold: 0,
-      priceChanged: 0,
-      dealers: 0,
-    };
-    entry.total += s.total_active;
-    entry.added += s.added;
-    entry.removed += s.removed;
-    entry.sold += s.sold;
-    entry.priceChanged += s.price_changed;
-    entry.dealers += 1;
-    byDate.set(s.snapshot_date, entry);
-  }
-  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+/** Success tally per dealer for the dealers on screen, from their newest runs. */
+export function useSuccessTally(ids: readonly number[], isSuccess: (status: string) => boolean) {
+  const statusesQ = useQuery({
+    queryKey: ['dealers', 'latest-statuses', ids],
+    queryFn: () => getLatestRunStatuses([...ids]),
+    enabled: ids.length > 0,
+    placeholderData: keepPreviousData,
+    staleTime: 15_000,
+  });
+  return useMemo(() => {
+    const tally = new Map<number, { ok: number; total: number }>();
+    for (const [id, statuses] of Object.entries(statusesQ.data ?? {})) {
+      const finished = statuses.filter((s) => s !== 'running');
+      tally.set(Number(id), { ok: finished.filter(isSuccess).length, total: finished.length });
+    }
+    return tally;
+  }, [statusesQ.data, isSuccess]);
+}
+
+/** Daily inventory totals across every dealer, or one. */
+export function useFleetTrend(days: number, dealerId?: number) {
+  const query = useQuery({
+    queryKey: ['dashboard', 'trend', days, dealerId],
+    queryFn: () => getFleetTrend(days, dealerId),
+    staleTime: 5 * 60_000,
+  });
+  return { daily: query.data ?? [], isLoading: query.isLoading };
 }
 
 /** Share of the day's inventory movement that came from each dealership. */

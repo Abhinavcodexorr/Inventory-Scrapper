@@ -25,7 +25,10 @@ const CompatibilityPage = lazy(() =>
 
 export default function App() {
   return (
-    <BrowserRouter>
+    // No transitions: as low-priority updates, navigations restart whenever data
+    // arrives. The Dealers page loads each dealer's runs separately, so on the
+    // server a click waited out the whole load (5s at 100 dealers).
+    <BrowserRouter useTransitions={false}>
       <AuthProvider>
       <Routes>
         <Route path="/login" element={<LoginPage />} />

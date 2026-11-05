@@ -32,11 +32,10 @@ import {
   type TimelineItem,
 } from '../components/ui';
 import {
-  aggregateByDate,
-  useAllRuns,
-  useAllTrends,
+  useFleetTrend,
+  useInventoryShare,
+  useRecentRuns,
   useDashboardSummary,
-  useDealerList,
   useDealerStats,
 } from '../hooks/useDealers';
 import { useRunScraperAction } from '../layout/runScraperContext';
@@ -58,7 +57,7 @@ import {
 
 const TREND_DAYS = 14;
 /** Runs pulled per dealer for the activity feed and success-rate maths. */
-const RUNS_PER_DEALER = 5;
+const RECENT_RUNS = 300;
 
 /** Subtle fractal-noise tile layered over the hero gradient — adds grain
  *  without an image asset. Same opacity works in both themes since the hero
@@ -75,17 +74,14 @@ export function DashboardPage() {
   const { settings } = useAppSettings();
   const runScraper = useRunScraperAction();
 
-  const dealersQ = useDealerList();
   const summaryQ = useDashboardSummary();
-  const statsQ = useDealerStats();
+  const statsQ = useDealerStats({ limit: 50 });
+  const shareQ = useInventoryShare(6);
 
-  // Both of these fan out one request per dealer — there is no aggregate
-  // endpoint. They share cache keys with the Jobs and Analytics pages, so
-  // navigating between them is instant rather than refetching.
-  const trends = useAllTrends(dealersQ.data, TREND_DAYS, Boolean(dealersQ.data?.length));
-  const runsAgg = useAllRuns(dealersQ.data, RUNS_PER_DEALER, Boolean(dealersQ.data?.length));
+  const trends = useFleetTrend(TREND_DAYS);
+  const runsAgg = useRecentRuns({ limit: RECENT_RUNS });
 
-  const daily = useMemo(() => aggregateByDate(trends.snapshots), [trends.snapshots]);
+  const daily = trends.daily;
   const summary = summaryQ.data;
 
   /** Latest run per dealer → the "is the platform healthy right now" numbers. */
@@ -120,7 +116,7 @@ export function DashboardPage() {
   const today = daily.at(-1);
   const yesterday = daily.at(-2);
 
-  const loadingCore = summaryQ.isLoading || dealersQ.isLoading;
+  const loadingCore = summaryQ.isLoading;
   const hasNeverSynced =
     Boolean(summary) && !summary!.last_sync_at && summary!.vehicles_active === 0 && summary!.added_today === 0;
 
@@ -165,21 +161,23 @@ export function DashboardPage() {
 
   /** Inventory share per dealership, largest first, with a long tail bucket. */
   const distribution = useMemo(() => {
-    const sorted = [...(dealersQ.data ?? [])]
-      .filter((d) => d.inventory_count > 0)
-      .sort((a, b) => b.inventory_count - a.inventory_count);
-    const top: { id: number; value: number; label: string; color: string }[] = sorted.slice(0, 6).map((d, i) => ({
+    const share = shareQ.data;
+    const top: { id: number; value: number; label: string; color: string }[] = (share?.top ?? []).map((d, i) => ({
       id: d.id,
       value: d.inventory_count,
       label: d.name,
       color: chartSeries[i % chartSeries.length],
     }));
-    const rest = sorted.slice(6).reduce((sum, d) => sum + d.inventory_count, 0);
-    if (rest > 0) {
-      top.push({ id: -1, value: rest, label: `${sorted.length - 6} more`, color: theme.palette.text.disabled });
+    if (share && share.rest_total > 0) {
+      top.push({
+        id: -1,
+        value: share.rest_total,
+        label: `${share.rest_count.toLocaleString()} more`,
+        color: theme.palette.text.disabled,
+      });
     }
     return top;
-  }, [dealersQ.data, theme.palette.text.disabled]);
+  }, [shareQ.data, theme.palette.text.disabled]);
 
   /** Top dealerships by today's volume, ranked for the leaderboard. */
   const leaderboard = useMemo(() => {
@@ -306,7 +304,7 @@ export function DashboardPage() {
         </Surface>
       </AppearIn>
 
-      {(summaryQ.isError || dealersQ.isError) && (
+      {summaryQ.isError && (
         <Alert severity="error" sx={{ mb: 3 }}>
           Could not reach the API. Confirm the backend is running and reachable at its configured address.
         </Alert>
@@ -516,7 +514,7 @@ export function DashboardPage() {
             dense
           >
             <ChartFrame
-              loading={dealersQ.isLoading}
+              loading={shareQ.isLoading}
               isEmpty={distribution.length === 0}
               height={260}
               emptyTitle="No inventory yet"

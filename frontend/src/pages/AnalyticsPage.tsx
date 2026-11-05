@@ -12,21 +12,23 @@ import {
   AppearIn,
   ChartFrame,
   FilterBar,
-  FilterSelect,
   PageHeader,
   SectionCard,
   StatCard,
   Surface,
   useChartSx,
 } from '../components/ui';
-import { aggregateByDate, useAllRuns, useAllTrends, useDealerList } from '../hooks/useDealers';
+import { useQuery } from '@tanstack/react-query';
+import { useFleetTrend, useInventoryShare, useRecentRuns } from '../hooks/useDealers';
+import { DealerFilter } from '../components/DealerFilter';
+import { getDealer } from '../api/dealers';
 import { useTokens } from '../theme/useTokens';
 import { chartSeries } from '../theme/tokens';
 import { colorForName, formatAxisDate, formatCompact, percent } from '../utils/format';
 import { isRunSuccess } from '../utils/runStatus';
 
 const TREND_DAYS = 30;
-const RUNS_PER_DEALER = 20;
+const RECENT_RUNS = 300;
 
 export function AnalyticsPage() {
   const navigate = useNavigate();
@@ -36,31 +38,28 @@ export function AnalyticsPage() {
 
   const [dealerId, setDealerId] = useState('');
 
-  const dealersQ = useDealerList();
-  const trends = useAllTrends(dealersQ.data, TREND_DAYS, Boolean(dealersQ.data?.length));
-  const runsAgg = useAllRuns(dealersQ.data, RUNS_PER_DEALER, Boolean(dealersQ.data?.length));
+  const selectedId = dealerId ? Number(dealerId) : undefined;
+  const shareQ = useInventoryShare(10);
+  const selectedQ = useQuery({
+    queryKey: ['dealer', selectedId],
+    queryFn: () => getDealer(selectedId!),
+    enabled: selectedId !== undefined,
+  });
+  const trends = useFleetTrend(TREND_DAYS, selectedId);
+  const daily = trends.daily;
+  const runsAgg = useRecentRuns({ limit: RECENT_RUNS, dealerId: selectedId });
+  const filteredRuns = runsAgg.runs;
 
-  const filteredDealers = useMemo(
-    () => (dealerId ? (dealersQ.data ?? []).filter((d) => String(d.id) === dealerId) : dealersQ.data ?? []),
-    [dealersQ.data, dealerId],
-  );
-
-  const filteredSnapshots = useMemo(
-    () => (dealerId ? trends.snapshots.filter((s) => String(s.dealer_id) === dealerId) : trends.snapshots),
-    [trends.snapshots, dealerId],
-  );
-  const daily = useMemo(() => aggregateByDate(filteredSnapshots), [filteredSnapshots]);
-
-  const filteredRuns = useMemo(
-    () => (dealerId ? runsAgg.runs.filter((r) => String(r.dealer_id) === dealerId) : runsAgg.runs),
-    [runsAgg.runs, dealerId],
-  );
-
-  /** Vehicle aging buckets from first_seen_at → now, derived from live inventory counts per dealer. */
+  /** The dealers charted: the selected one, or the ten largest. */
   const inventoryByBrandData = useMemo(() => {
-    const sorted = [...filteredDealers].sort((a, b) => b.inventory_count - a.inventory_count).slice(0, 10);
-    return sorted;
-  }, [filteredDealers]);
+    if (selectedId !== undefined) {
+      const d = selectedQ.data;
+      return d ? [{ id: d.id, name: d.name, inventory_count: d.inventory_count }] : [];
+    }
+    return shareQ.data?.top ?? [];
+  }, [selectedId, selectedQ.data, shareQ.data]);
+  const inventoryLoading = selectedId !== undefined ? selectedQ.isLoading : shareQ.isLoading;
+  const dealerCount = selectedId !== undefined ? 1 : (shareQ.data?.dealer_count ?? 0);
 
   const scraperEfficiency = useMemo(() => {
     const byDealer = new Map<number, { name: string; durations: number[]; success: number; total: number }>();
@@ -99,7 +98,7 @@ export function AnalyticsPage() {
     return durations.length ? durations.reduce((a, b) => a + b, 0) / durations.length : 0;
   }, [filteredRuns]);
 
-  const totalInventory = filteredDealers.reduce((sum, d) => sum + d.inventory_count, 0);
+  const totalInventory = selectedId !== undefined ? (selectedQ.data?.inventory_count ?? 0) : (shareQ.data?.total ?? 0);
   const growth = daily.length >= 2 ? daily[daily.length - 1].total - daily[0].total : 0;
 
   return (
@@ -110,14 +109,7 @@ export function AnalyticsPage() {
       />
 
       <FilterBar activeCount={dealerId ? 1 : 0} onReset={() => setDealerId('')}>
-        <FilterSelect
-          label="Dealer"
-          value={dealerId}
-          onChange={setDealerId}
-          allLabel="All dealerships"
-          width={200}
-          options={(dealersQ.data ?? []).map((d) => ({ value: String(d.id), label: d.name }))}
-        />
+        <DealerFilter value={dealerId} onChange={setDealerId} allLabel="All dealerships" width={240} />
       </FilterBar>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }, gap: 2, mb: 3 }}>
@@ -138,8 +130,8 @@ export function AnalyticsPage() {
             value={totalInventory}
             icon={<HourglassEmptyRoundedIcon />}
             color={chartSeries[1]}
-            deltaCaption={`across ${filteredDealers.length} dealership${filteredDealers.length === 1 ? '' : 's'}`}
-            loading={dealersQ.isLoading}
+            deltaCaption={`across ${dealerCount.toLocaleString()} dealership${dealerCount === 1 ? '' : 's'}`}
+            loading={inventoryLoading}
           />
         </AppearIn>
         <AppearIn index={2}>
@@ -205,7 +197,7 @@ export function AnalyticsPage() {
         <AppearIn index={1}>
           <SectionCard title="Inventory by dealer" description="Top 10 by active vehicle count" sx={{ height: '100%' }}>
             <ChartFrame
-              loading={dealersQ.isLoading}
+              loading={inventoryLoading}
               isEmpty={inventoryByBrandData.length === 0}
               height={300}
               emptyTitle="No inventory yet"
@@ -354,7 +346,7 @@ export function AnalyticsPage() {
         </SectionCard>
       </AppearIn>
 
-      {(dealersQ.data ?? []).length === 0 && (
+      {shareQ.data?.dealer_count === 0 && (
         <Surface sx={{ p: 3, mt: 2, textAlign: 'center' }}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
             Add a dealership to start building analytics.

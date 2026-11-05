@@ -6,6 +6,7 @@ run) so the dashboard never has to scan the whole `cars` table.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func
@@ -13,7 +14,14 @@ from sqlalchemy.orm import Session
 
 from dealer_scraper.models import Car, DailyInventorySnapshot, Dealer, ScrapeRun
 from ..deps import get_db
-from ..schemas import DashboardSummary, DealerStats, SnapshotOut
+from ..schemas import (
+    DashboardSummary,
+    DealerStats,
+    FleetDayOut,
+    InventoryShareOut,
+    InventoryShareRow,
+    SnapshotOut,
+)
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -81,14 +89,19 @@ def summary(db: Session = Depends(get_db)):
 
 
 @router.get("/dealers", response_model=list[DealerStats])
-def per_dealer(db: Session = Depends(get_db)):
+def per_dealer(
+    limit: Annotated[int | None, Query(ge=1, le=500, description="Largest dealers first. Omit for all.")] = None,
+    attention: Annotated[bool, Query(description="Only failed, never-synced or sharply shrunk dealers")] = False,
+    db: Session = Depends(get_db),
+):
     """Per-dealership statistics — the main dashboard table (SOW §6)."""
     today, yesterday = date.today(), date.today() - timedelta(days=1)
     t_snaps, y_snaps = _snap_map(db, today), _snap_map(db, yesterday)
 
     feed = _latest_feed_counts(db)
     out: list[DealerStats] = []
-    for dealer in db.execute(select(Dealer).order_by(Dealer.name)).scalars():
+    dealers = select(Dealer.id, Dealer.name, Dealer.inventory_count, Dealer.last_synced_at)
+    for dealer in db.execute(dealers.order_by(Dealer.name)):
         t, y = t_snaps.get(dealer.id), y_snaps.get(dealer.id)
         f = feed.get(dealer.id)
         out.append(DealerStats(
@@ -105,7 +118,56 @@ def per_dealer(db: Session = Depends(get_db)):
             last_sync_at=dealer.last_synced_at,
             sync_status=(t.sync_status if t else None),
         ))
-    return out
+    if attention:
+        out = sorted((s for s in out if _needs_attention(s)), key=lambda s: s.sync_status != "failed")
+    elif limit is not None:
+        out.sort(key=lambda s: -s.total_today)
+    return out[:limit] if limit is not None else out
+
+
+def _needs_attention(s: DealerStats) -> bool:
+    drop = s.total_yesterday - s.total_today
+    return (s.sync_status == "failed" or not s.last_sync_at
+            or (s.total_yesterday > 20 and drop / s.total_yesterday > 0.2))
+
+
+@router.get("/trend", response_model=list[FleetDayOut])
+def fleet_trend(
+    days: int = Query(30, ge=1, le=365),
+    dealer_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Daily totals across every dealer (or one), for charts."""
+    s = DailyInventorySnapshot
+    filters = [s.snapshot_date >= date.today() - timedelta(days=days)]
+    if dealer_id is not None:
+        filters.append(s.dealer_id == dealer_id)
+    rows = db.execute(
+        select(s.snapshot_date, func.sum(s.total_active), func.sum(s.added), func.sum(s.removed),
+               func.sum(s.sold), func.sum(s.price_changed), func.count())
+        .where(*filters).group_by(s.snapshot_date).order_by(s.snapshot_date)
+    ).all()
+    return [FleetDayOut(date=r[0], total=r[1] or 0, added=r[2] or 0, removed=r[3] or 0, sold=r[4] or 0,
+                        price_changed=r[5] or 0, dealers=r[6]) for r in rows]
+
+
+@router.get("/inventory-share", response_model=InventoryShareOut)
+def inventory_share(top: int = Query(6, ge=1, le=50), db: Session = Depends(get_db)):
+    """The largest dealers by inventory, plus totals for everyone else."""
+    leaders = db.execute(
+        select(Dealer.id, Dealer.name, Dealer.inventory_count)
+        .where(Dealer.inventory_count > 0)
+        .order_by(Dealer.inventory_count.desc(), Dealer.id).limit(top)
+    ).all()
+    dealer_count, stocked, total = db.execute(select(
+        func.count(), func.count().filter(Dealer.inventory_count > 0),
+        func.coalesce(func.sum(Dealer.inventory_count), 0)).select_from(Dealer)).one()
+    return InventoryShareOut(
+        top=[InventoryShareRow(id=d.id, name=d.name, inventory_count=d.inventory_count) for d in leaders],
+        total=total, dealer_count=dealer_count,
+        rest_count=stocked - len(leaders),
+        rest_total=total - sum(d.inventory_count for d in leaders),
+    )
 
 
 @router.get("/dealers/{dealer_id}/trend", response_model=list[SnapshotOut])

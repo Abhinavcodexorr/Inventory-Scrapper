@@ -38,7 +38,8 @@ import {
   type Column,
   type SortState,
 } from '../components/ui';
-import { useDealerList } from '../hooks/useDealers';
+import { useDealerNames } from '../hooks/useDealers';
+import { DealerFilter } from '../components/DealerFilter';
 import { useDebouncedValue } from '../utils/useDebouncedValue';
 import { useAppSettings } from '../theme/settings';
 import { useTokens } from '../theme/useTokens';
@@ -132,8 +133,6 @@ export function VehiclesPage() {
     priceMax: useDebouncedValue(filters.priceMax),
   };
 
-  const dealersQ = useDealerList();
-
   const queryParams = useMemo(
     () => ({
       q: debounced.search || undefined,
@@ -197,12 +196,12 @@ export function VehiclesPage() {
     localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(savedFilters));
   }, [savedFilters]);
 
-  const dealerName = useMemo(() => {
-    const map = new Map((dealersQ.data ?? []).map((d) => [d.id, d.name]));
-    return (id: number) => map.get(id) ?? `Dealer #${id}`;
-  }, [dealersQ.data]);
-
   const rows = useMemo(() => vehiclesQ.data?.items ?? [], [vehiclesQ.data]);
+  const visibleDealerIds = useMemo(
+    () => [...rows.map((v) => v.dealer_id), ...(filters.dealerId ? [Number(filters.dealerId)] : [])],
+    [rows, filters.dealerId],
+  );
+  const dealerName = useDealerNames(visibleDealerIds);
   const total = vehiclesQ.data?.meta.total ?? 0;
   const activeFilterCount = Object.entries(filters).filter(([, v]) => v !== '').length;
 
@@ -445,13 +444,7 @@ export function VehiclesPage() {
             { value: 'all', label: 'All statuses' },
           ]}
         />
-        <FilterSelect
-          label="Dealer"
-          value={filters.dealerId}
-          onChange={(v) => set('dealerId', v)}
-          width={180}
-          options={(dealersQ.data ?? []).map((d) => ({ value: String(d.id), label: d.name }))}
-        />
+        <DealerFilter value={filters.dealerId} onChange={(v) => set('dealerId', v)} width={200} />
         <TextField
           size="small"
           label="Make"

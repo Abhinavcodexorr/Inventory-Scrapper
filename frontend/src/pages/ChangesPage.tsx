@@ -24,7 +24,8 @@ import {
   useChartSx,
   type Column,
 } from '../components/ui';
-import { aggregateByDate, useAllTrends, useDashboardSummary, useDealerList } from '../hooks/useDealers';
+import { useDashboardSummary, useFleetTrend } from '../hooks/useDealers';
+import { DealerFilter } from '../components/DealerFilter';
 import { useTokens } from '../theme/useTokens';
 import { chartSeries } from '../theme/tokens';
 import { formatAxisDate, formatDate, formatMoney, formatRelative } from '../utils/format';
@@ -78,10 +79,9 @@ export function ChangesPage() {
   const [hours, setHours] = useState('24');
   const [page, setPage] = useState(0);
 
-  const dealersQ = useDealerList();
   const summaryQ = useDashboardSummary();
-  const trends = useAllTrends(dealersQ.data, TREND_DAYS, Boolean(dealersQ.data?.length));
-  const daily = useMemo(() => aggregateByDate(trends.snapshots), [trends.snapshots]);
+  const trends = useFleetTrend(TREND_DAYS);
+  const daily = trends.daily;
 
   useEffect(() => setPage(0), [tab, dealerId, hours]);
 
@@ -328,13 +328,7 @@ export function ChangesPage() {
           width={180}
           options={WINDOWS}
         />
-        <FilterSelect
-          label="Dealer"
-          value={dealerId}
-          onChange={setDealerId}
-          width={200}
-          options={(dealersQ.data ?? []).map((d) => ({ value: String(d.id), label: d.name }))}
-        />
+        <DealerFilter value={dealerId} onChange={setDealerId} width={220} />
       </FilterBar>
 
       <SectionCard flush>

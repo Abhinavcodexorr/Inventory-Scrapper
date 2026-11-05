@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -37,13 +37,15 @@ import {
   cancelDiscoveryRun,
   createDealer,
   discoverConfig,
+  getProviderTemplate,
+  lookupWebsite,
   type DiscoveryProgress,
   getDealer,
   listProviders,
   updateDealer,
 } from '../api/dealers';
 import { getErrorMessage } from '../api/client';
-import { useDealerList } from '../hooks/useDealers';
+import { useDebouncedValue } from '../utils/useDebouncedValue';
 import { hasForeignUrls, retargetConfig } from '../utils/retargetConfig';
 import { PageHeader, SectionCard, Surface } from '../components/ui';
 import { useTokens } from '../theme/useTokens';
@@ -97,19 +99,6 @@ const CONFIG_TEMPLATE: Record<string, string> = {
     2,
   ),
 };
-
-/** Identity of a website for duplicate checks: the scheme, "www." and a trailing
- *  slash don't change the site, while a path can (dealers sharing a host). */
-function siteKey(value: string): string | null {
-  const url = value.trim();
-  if (!url) return null;
-  try {
-    const u = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(url) ? url : `https://${url}`);
-    return `${u.hostname.replace(/^www\./i, '').toLowerCase()}${u.pathname.replace(/\/+$/, '')}`;
-  } catch {
-    return null;
-  }
-}
 
 function isValidUrl(value: string): boolean {
   try {
@@ -208,15 +197,16 @@ export function DealerFormPage() {
 
   const dealerQ = useQuery({ queryKey: ['dealer', id], queryFn: () => getDealer(Number(id)), enabled: isEdit });
   const providersQ = useQuery({ queryKey: ['providers'], queryFn: listProviders });
-  // The shared list: it's usually cached already, so the duplicate check below
-  // works from the first keystroke without downloading every dealer again.
-  const dealersQ = useDealerList();
-
-  const duplicateOf = useMemo(() => {
-    const key = siteKey(form.base_url);
-    if (!key) return undefined;
-    return dealersQ.data?.find((d) => d.id !== Number(id) && siteKey(d.base_url) === key);
-  }, [form.base_url, dealersQ.data, id]);
+  // Asked of the server as the URL is typed: the browser doesn't hold every dealer.
+  const typedUrl = form.base_url.trim();
+  const checkedUrl = useDebouncedValue(typedUrl, 250);
+  const lookupQ = useQuery({
+    queryKey: ['dealers', 'lookup', checkedUrl, id],
+    queryFn: () => lookupWebsite(checkedUrl, isEdit ? Number(id) : undefined),
+    enabled: checkedUrl.length > 0,
+  });
+  const duplicateOf = checkedUrl === typedUrl ? lookupQ.data : undefined;
+  const checkingUrl = typedUrl.length > 0 && (checkedUrl !== typedUrl || lookupQ.isFetching);
 
   useEffect(() => {
     if (dealerQ.data) {
@@ -238,31 +228,29 @@ export function DealerFormPage() {
     }
   }, [dealerQ.data]);
 
-  const providerOptions = useMemo(() => {
-    const fromApi = providersQ.data ?? [];
-    const fromDealers = (dealersQ.data ?? []).map((d) => d.website_provider).filter((p): p is string => Boolean(p));
-    return Array.from(new Set([...fromApi, ...fromDealers])).sort();
-  }, [providersQ.data, dealersQ.data]);
+  const providerOptions = useMemo(() => [...(providersQ.data ?? [])].sort(), [providersQ.data]);
 
   function setField<K extends keyof DealerCreate>(key: K, value: DealerCreate[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  function onProviderChange(value: string | null) {
+  const latestProvider = useRef('');
+
+  async function onProviderChange(value: string | null) {
     const provider = value ?? '';
+    latestProvider.current = provider;
     setField('website_provider', provider);
     if (!provider || isEdit) {
       setScraperReused(false);
       return;
     }
-    // Prefer a template that has actually scraped something: copying a config
-    // that never produced a vehicle spreads a broken template across the fleet.
-    const candidates = (dealersQ.data ?? []).filter(
-      (d) => d.website_provider === provider && d.scrape_config &&
-             Object.keys(d.scrape_config).length > 0,
-    );
-    const template =
-      candidates.find((d) => d.inventory_count > 0) ?? candidates[0];
+    let template: Awaited<ReturnType<typeof getProviderTemplate>> = null;
+    try {
+      template = await getProviderTemplate(provider);
+    } catch (e) {
+      enqueueSnackbar(getErrorMessage(e), { variant: 'error' });
+    }
+    if (latestProvider.current !== provider) return; // the choice changed while this loaded
     if (template) {
       // Repoint the copied URLs at THIS dealer's site. Left verbatim they point
       // at the template dealer, so the new dealership would silently scrape the
@@ -526,7 +514,7 @@ export function DealerFormPage() {
               <Button
                 variant="contained"
                 onClick={handleDetect}
-                disabled={discoverMut.isPending || !!duplicateOf}
+                disabled={discoverMut.isPending || !!duplicateOf || checkingUrl}
                 sx={{ whiteSpace: 'nowrap', minWidth: 168, height: 40, flexShrink: 0 }}
                 startIcon={
                   discoverMut.isPending ? <CircularProgress size={16} color="inherit" /> : <AutoAwesomeRoundedIcon />

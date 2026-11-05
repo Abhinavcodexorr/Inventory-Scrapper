@@ -417,6 +417,57 @@ class SyncRunOut(BaseModel):
     stats: dict | None = None
 
 
+class RunWithDealerOut(SyncRunOut):
+    dealer_name: str = ""
+    dealer_active: bool = True
+
+
+class RunStatsOut(BaseModel):
+    sampled: int
+    running: int
+    completed: int
+    failed: int
+    success_rate: float
+    avg_duration_seconds: float
+
+
+class SyncAllOut(BaseModel):
+    queued: int
+    already_running: int
+    skipped_no_settings: int
+
+
+class DealerMatchOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    base_url: str
+
+
+class FleetDayOut(BaseModel):
+    date: date
+    total: int
+    added: int
+    removed: int
+    sold: int
+    price_changed: int
+    dealers: int
+
+
+class InventoryShareRow(BaseModel):
+    id: int
+    name: str
+    inventory_count: int
+
+
+class InventoryShareOut(BaseModel):
+    top: list[InventoryShareRow]
+    total: int
+    dealer_count: int
+    rest_count: int
+    rest_total: int
+
+
 class SyncJobOut(BaseModel):
     """Returned by POST /api/dealers/{id}/sync."""
     status: str          # queued | running  ("running" = one was already in flight)
