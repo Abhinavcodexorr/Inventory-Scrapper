@@ -41,6 +41,7 @@ import {
   ChartFrame,
   DataTable,
   EmptyState,
+  ExpandableError,
   KeyValueGrid,
   PageHeader,
   ProgressRing,
@@ -287,16 +288,12 @@ export function DealerDetailPage() {
       {
         key: 'error',
         header: 'Error',
-        minWidth: 180,
+        minWidth: 320,
         sortable: false,
         value: (r) => r.error,
         render: (r) =>
           r.error ? (
-            <Tooltip title={r.error}>
-              <Typography variant="body2" color="error.main" noWrap sx={{ maxWidth: 220 }}>
-                {r.error}
-              </Typography>
-            </Tooltip>
+            <ExpandableError text={r.error} />
           ) : (
             <Typography variant="body2" color="text.disabled">
               —

@@ -16,6 +16,7 @@ import {
   AppearIn,
   DataTable,
   EmptyState,
+  ExpandableError,
   FilterBar,
   FilterSelect,
   PageHeader,
@@ -186,16 +187,12 @@ export function JobsPage() {
       {
         key: 'error',
         header: 'Error',
-        minWidth: 160,
+        minWidth: 320,
         sortable: false,
         value: (r) => r.error,
         render: (r) =>
           r.error ? (
-            <Tooltip title={r.error}>
-              <Typography variant="body2" color="error.main" noWrap sx={{ maxWidth: 200 }}>
-                {r.error}
-              </Typography>
-            </Tooltip>
+            <ExpandableError text={r.error} />
           ) : (
             <Typography variant="body2" color="text.disabled">
               —

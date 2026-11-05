@@ -27,7 +27,7 @@ import pytest
 
 from dealer_scraper.adapters.json_api import JsonApiAdapter
 from dealer_scraper.adapters.registry import validate_scrape_config
-from dealer_scraper.adapters.response_inspector import ListPathError
+from dealer_scraper.adapters.response_inspector import ListPathError, ResponseFormatError
 from dealer_scraper.config_lint import structural_problems
 
 FIX = Path(__file__).parent / "fixtures" / "hillz"
@@ -162,6 +162,31 @@ def test_formula7_reads_listed_vehicles_plus_index_via_detail_pages() -> None:
     assert len(detail_reqs) == len(set(detail_reqs))
 
 
+def _f7_without_index(listed: list) -> dict:
+    routes = dict(F7_ROUTES)
+    data = json.loads((FIX / "formula7_cars.json").read_text())
+    data["pageProps"]["vehiclesData"] = listed
+    routes[f"https://formula7motors.ca/_next/data/{BUILD_ID}/cars.json"] = (
+        200, "application/json", json.dumps(data))
+    return routes
+
+
+def test_empty_listing_says_so_instead_of_blaming_the_index_path() -> None:
+    """The index lives on the first vehicle, so an empty list used to surface as
+    "list_path '...fullIds' is missing", which reads as a broken config."""
+    a = _adapter(CONFIG_FORMULA7, _f7_without_index([]), [])
+    with pytest.raises(ResponseFormatError, match="empty vehicle list"):
+        list(a.iter_vehicles())
+
+
+def test_listed_vehicles_are_kept_when_the_index_is_gone() -> None:
+    """A lot shrunk to one car can stop carrying fullIds."""
+    listed = json.loads((FIX / "formula7_cars.json").read_text())["pageProps"]["vehiclesData"][:1]
+    listed[0].pop("fullIds")
+    a = _adapter(CONFIG_FORMULA7, _f7_without_index(listed), [])
+    assert [v.external_id for v in a.iter_vehicles()] == [listed[0]["stock_NO"]]
+
+
 def test_formula7_reference_vehicle_matches_the_live_listing() -> None:
     log: list[str] = []
     ram = {v.external_id: v for v in _adapter(CONFIG_FORMULA7, F7_ROUTES, log).iter_vehicles()}["150429"]
@@ -261,6 +286,8 @@ def main() -> None:
         test_22g_config_against_formula7_fails_loudly_with_the_right_path,
         test_formula7_config_validates,
         test_formula7_reads_listed_vehicles_plus_index_via_detail_pages,
+        test_empty_listing_says_so_instead_of_blaming_the_index_path,
+        test_listed_vehicles_are_kept_when_the_index_is_gone,
         test_formula7_reference_vehicle_matches_the_live_listing,
         test_formula7_listed_vehicles_get_their_url_from_the_index,
         test_build_id_follows_a_redeploy,

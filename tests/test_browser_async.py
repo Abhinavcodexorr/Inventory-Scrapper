@@ -94,7 +94,8 @@ class FakeAsyncPage:
     async def wait_for_load_state(self, state=None, timeout=None):
         return None
 
-    async def wait_for_selector(self, selector, timeout=None):
+    async def wait_for_selector(self, selector, state=None, timeout=None):
+        assert state == "attached", "a hidden nav link must not fail the wait"
         if self.site.first_page_never_loads:
             raise TimeoutError("never appears")
         return None

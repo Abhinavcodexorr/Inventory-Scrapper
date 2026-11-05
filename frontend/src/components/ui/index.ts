@@ -6,6 +6,7 @@ export { ConfirmDialog } from './ConfirmDialog';
 export { CountUp } from './CountUp';
 export { DataTable, type Column, type SortState } from './DataTable';
 export { EmptyState, type EmptyArt } from './EmptyState';
+export { ExpandableError } from './ExpandableError';
 export { FilterBar, FilterSelect, NumberRange, SearchField, type FilterOption } from './Filters';
 export { KeyValueGrid, type KeyValueItem } from './KeyValueGrid';
 export { PageHeader } from './PageHeader';

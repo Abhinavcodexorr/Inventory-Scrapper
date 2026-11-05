@@ -163,7 +163,7 @@ export function AppLayout() {
                 from: { opacity: 0, transform: 'translate3d(0, 6px, 0)' },
                 to: { opacity: 1, transform: 'none' },
               },
-              animation: `page-in 280ms ${tk.motion.entrance} both`,
+              animation: `page-in 120ms ${tk.motion.entrance} both`,
               '@media (prefers-reduced-motion: reduce)': { animation: 'none' },
             }}
           >

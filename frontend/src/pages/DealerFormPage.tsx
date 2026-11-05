@@ -39,11 +39,11 @@ import {
   discoverConfig,
   type DiscoveryProgress,
   getDealer,
-  listDealers,
   listProviders,
   updateDealer,
 } from '../api/dealers';
 import { getErrorMessage } from '../api/client';
+import { useDealerList } from '../hooks/useDealers';
 import { hasForeignUrls, retargetConfig } from '../utils/retargetConfig';
 import { PageHeader, SectionCard, Surface } from '../components/ui';
 import { useTokens } from '../theme/useTokens';
@@ -97,6 +97,19 @@ const CONFIG_TEMPLATE: Record<string, string> = {
     2,
   ),
 };
+
+/** Identity of a website for duplicate checks: the scheme, "www." and a trailing
+ *  slash don't change the site, while a path can (dealers sharing a host). */
+function siteKey(value: string): string | null {
+  const url = value.trim();
+  if (!url) return null;
+  try {
+    const u = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(url) ? url : `https://${url}`);
+    return `${u.hostname.replace(/^www\./i, '').toLowerCase()}${u.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return null;
+  }
+}
 
 function isValidUrl(value: string): boolean {
   try {
@@ -195,7 +208,15 @@ export function DealerFormPage() {
 
   const dealerQ = useQuery({ queryKey: ['dealer', id], queryFn: () => getDealer(Number(id)), enabled: isEdit });
   const providersQ = useQuery({ queryKey: ['providers'], queryFn: listProviders });
-  const dealersQ = useQuery({ queryKey: ['dealers', 'templates'], queryFn: () => listDealers() });
+  // The shared list: it's usually cached already, so the duplicate check below
+  // works from the first keystroke without downloading every dealer again.
+  const dealersQ = useDealerList();
+
+  const duplicateOf = useMemo(() => {
+    const key = siteKey(form.base_url);
+    if (!key) return undefined;
+    return dealersQ.data?.find((d) => d.id !== Number(id) && siteKey(d.base_url) === key);
+  }, [form.base_url, dealersQ.data, id]);
 
   useEffect(() => {
     if (dealerQ.data) {
@@ -483,9 +504,13 @@ export function DealerFormPage() {
                 fullWidth
                 value={form.base_url}
                 onChange={(e) => setField('base_url', e.target.value)}
-                error={touched && !!errors.base_url}
+                error={!!duplicateOf || (touched && !!errors.base_url)}
                 helperText={
-                  touched && errors.base_url ? errors.base_url : 'Then press Detect settings to auto-configure the scraper'
+                  duplicateOf
+                    ? `This website already exists (${duplicateOf.name})`
+                    : touched && errors.base_url
+                      ? errors.base_url
+                      : 'Then press Detect settings to auto-configure the scraper'
                 }
                 slotProps={{
                   htmlInput: { maxLength: 500 },
@@ -501,7 +526,7 @@ export function DealerFormPage() {
               <Button
                 variant="contained"
                 onClick={handleDetect}
-                disabled={discoverMut.isPending}
+                disabled={discoverMut.isPending || !!duplicateOf}
                 sx={{ whiteSpace: 'nowrap', minWidth: 168, height: 40, flexShrink: 0 }}
                 startIcon={
                   discoverMut.isPending ? <CircularProgress size={16} color="inherit" /> : <AutoAwesomeRoundedIcon />
@@ -704,6 +729,7 @@ export function DealerFormPage() {
               saveM.isPending ||
               discoverMut.isPending ||
               discovery?.verdict === 'unsupported' ||
+              !!duplicateOf ||
               (Object.keys(errors).length > 0 && touched)
             }
             startIcon={saveM.isPending ? <CircularProgress size={16} color="inherit" /> : undefined}

@@ -90,7 +90,7 @@ class FakePage:
             self.current_url_page = int(url.rsplit("page=", 1)[1])
         self._collect_seen = set()  # a real navigation drops any window state
 
-    def wait_for_selector(self, selector, timeout=None):
+    def wait_for_selector(self, selector, state=None, timeout=None):
         return None
 
     def wait_for_load_state(self, state=None, timeout=None):
@@ -259,7 +259,7 @@ def test_retry_backoff_never_sleeps_after_the_final_failed_attempt():
     page = FakePage(rounds=[[]])
 
     class _NeverFound(FakePage):
-        def wait_for_selector(self, selector, timeout=None):
+        def wait_for_selector(self, selector, state=None, timeout=None):
             raise TimeoutError("never appears")
 
     never_page = _NeverFound(rounds=[[]])

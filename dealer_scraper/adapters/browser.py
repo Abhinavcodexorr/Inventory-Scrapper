@@ -109,6 +109,12 @@ _COLLECT_JS = """
     // to be chatty (a photo carousel saying "View All Photos 1 of 31" clears 40
     // on its own), which yields a card with no title, price or mileage in it.
     let card = cardSel ? a.closest(cardSel) : null;
+    // A link wrapping the whole card already holds the vehicle. Climbing from it
+    // reaches the grid, and every vehicle then reads the first car's details
+    // (grandeleasing.com: 35 rows of the same Challenger).
+    const own = a.textContent || '';
+    if (!card && /\\b(19|20)\\d{2}\\b/.test(own)
+        && /\\$\\s?[\\d,]{3,}|[\\d,]{3,}\\s*(km|mi\\b|miles)/i.test(own)) card = a;
     if (!card) {
       card = a;
       for (let i = 0; i < 6 && card.parentElement; i++) {
@@ -577,8 +583,14 @@ class BrowserAdapter:
                             # api mode reads the feed, not the grid, so a late
                             # (or never) rendered grid must not fail the run.
                             if not self.api_url:
+                                # state="attached": Playwright's default waits for the
+                                # FIRST match to be visible, and that can be a link in a
+                                # closed nav dropdown (grandeleasing.com's "Shop Vehicles"),
+                                # which never shows even with 36 cars on screen. Whether
+                                # real vehicles rendered is checked just below.
                                 page.wait_for_selector(
-                                    self.wait_selector, timeout=self.nav_timeout // retries)
+                                    self.wait_selector, state="attached",
+                                    timeout=self.nav_timeout // retries)
                         found = True
                         break
                     except Exception as exc:

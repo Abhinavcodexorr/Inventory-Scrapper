@@ -672,7 +672,20 @@ class JsonApiAdapter:
 
     def _iter_details(self, first_data: Any, list_items: list) -> Iterator[NormalizedVehicle]:
         d = self.detail
-        index = resolve_list(first_data, d["index_path"], where="(detail.index_path)")
+        # The index sits on the first listed vehicle, so it goes missing whenever
+        # the listing does, or shrinks to records without one. The config was
+        # written when the site had an index, so neither is a wrong path.
+        index = _dig(first_data, d["index_path"])
+        if not isinstance(index, list):
+            if not list_items:
+                raise ResponseFormatError(
+                    f"The dealer's site returned an empty vehicle list to this server "
+                    f"('{self.list_path}' has no vehicles), so there is nothing to read. "
+                    f"The saved inventory was left unchanged. If the website shows cars, it is "
+                    f"withholding them from this server's IP; if not, the lot is empty.")
+            log.warning("No index at %s: reading only the %s vehicle(s) listed in the response",
+                        d["index_path"], len(list_items))
+            index = []
         entries = [e for e in index if isinstance(e, dict) and e.get(d["key"]) is not None]
         by_key = {str(e[d["key"]]): e for e in entries}
 

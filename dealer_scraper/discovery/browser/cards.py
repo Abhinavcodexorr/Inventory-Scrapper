@@ -64,9 +64,8 @@ FIND_CARDS_JS = r"""
     if (idRe && !idRe.test(href)) continue;   // nav links, not vehicles
     seen.add(href);
 
-    let node = a;
-    for (let i = 0; i < maxDepth && node.parentElement; i++) {
-      node = node.parentElement;
+    // Starts at the anchor itself: a link can wrap the whole card.
+    for (let i = 0, node = a; i <= maxDepth && node; i++, node = node.parentElement) {
       const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
       if (!looksLikeCard(text)) continue;
       // Guard against overshooting into the grid container, which also
@@ -81,7 +80,7 @@ FIND_CARDS_JS = r"""
       }
       const id = identify(node);
       found.push({
-        depth: i + 1,
+        depth: i,
         vehicles: hrefs.size,
         selectors: id ? id.selectors : [],
         textLen: text.length,

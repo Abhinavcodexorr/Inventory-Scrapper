@@ -387,7 +387,10 @@ class AsyncBrowserAdapter:
             try:
                 with self.timer.stage("nav"):
                     await page.goto(first, wait_until="domcontentloaded", timeout=self.nav_timeout)
-                    await page.wait_for_selector(self.wait_selector, timeout=self.nav_timeout // retries)
+                    # "attached": the first match can be a link in a closed nav dropdown,
+                    # which never becomes visible. See BrowserAdapter.iter_vehicles.
+                    await page.wait_for_selector(
+                        self.wait_selector, state="attached", timeout=self.nav_timeout // retries)
                 found = True
                 break
             except Exception as exc:
