@@ -8,6 +8,7 @@ import StorefrontRoundedIcon from '@mui/icons-material/StorefrontRounded';
 import DirectionsCarFilledRoundedIcon from '@mui/icons-material/DirectionsCarFilledRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import HistoryRoundedIcon from '@mui/icons-material/HistoryRounded';
 import DarkModeRoundedIcon from '@mui/icons-material/DarkModeRounded';
 import LightModeRoundedIcon from '@mui/icons-material/LightModeRounded';
 import { ALL_NAV_ITEMS } from './navConfig';
@@ -101,6 +102,14 @@ export function CommandPalette({ open, onClose, onRunScraper }: Props) {
         hint: 'Add many websites from a list',
         icon: <AddRoundedIcon />,
         run: () => go('/dealers/bulk'),
+      },
+      {
+        id: 'action:past-imports',
+        group: 'Actions',
+        label: 'Past imports',
+        hint: 'Bulk lists, in process and waiting',
+        icon: <HistoryRoundedIcon />,
+        run: () => go('/dealers/imports'),
       },
       {
         id: 'action:run-scraper',

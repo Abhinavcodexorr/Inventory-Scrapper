@@ -251,3 +251,18 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def test_activity_counts_websites_in_process_and_waiting_across_lists() -> None:
+    client = _fresh_client()
+    client.post("/api/bulk-imports", json={"rows": _rows("b1.ca", "b2.ca", "b3.ca", "b4.ca")})
+    second = client.post("/api/bulk-imports", json={"rows": _rows("c1.ca", "c2.ca", "c3.ca")}).json()["id"]
+    hang = {f"https://{h}": {"hang": True} for h in ("b1.ca", "b2.ca", "b3.ca", "b4.ca", "c1.ca", "c2.ca", "c3.ca")}
+    _run_all(Sites(hang), max_ticks=3)
+
+    body = client.get("/api/bulk-imports/activity").json()
+    assert body == {"running_imports": 2, "checking": 5, "waiting": 2, "concurrency": 5}
+
+    # A stopped list's waiting rows are skipped, so they no longer count.
+    client.post(f"/api/bulk-imports/{second}/stop")
+    assert client.get("/api/bulk-imports/activity").json()["waiting"] == 0

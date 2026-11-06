@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { BulkImport, BulkImportRowResult, BulkPreview, BulkRow } from '../types';
+import type { BulkActivity, BulkImport, BulkImportRowResult, BulkPreview, BulkRow } from '../types';
 
 export interface BulkImportPayload {
   provider: string | null;
@@ -19,6 +19,19 @@ export async function createBulkImport(payload: BulkImportPayload): Promise<Bulk
 
 export async function listBulkImports(limit = 20): Promise<BulkImport[]> {
   const { data } = await api.get<BulkImport[]>('/api/bulk-imports', { params: { limit } });
+  return data;
+}
+
+export async function listBulkImportsPage(params: {
+  limit: number;
+  offset: number;
+}): Promise<{ imports: BulkImport[]; total: number }> {
+  const res = await api.get<BulkImport[]>('/api/bulk-imports', { params });
+  return { imports: res.data, total: Number(res.headers['x-total-count'] ?? res.data.length) };
+}
+
+export async function getBulkActivity(): Promise<BulkActivity> {
+  const { data } = await api.get<BulkActivity>('/api/bulk-imports/activity');
   return data;
 }
 

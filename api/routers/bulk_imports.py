@@ -9,11 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from dealer_scraper.config import settings
 from dealer_scraper.models import BulkImport, BulkImportRow, Dealer
 
 from ..deps import get_db
 from ..schemas import (
-    BulkImportIn, BulkImportOut, BulkImportRowOut, BulkPreviewOut, BulkPreviewRowOut, BulkRowIn,
+    BulkActivityOut, BulkImportIn, BulkImportOut, BulkImportRowOut, BulkPreviewOut, BulkPreviewRowOut, BulkRowIn,
 )
 from .dealers import _site_key, _site_label
 
@@ -182,6 +183,24 @@ def list_imports(
         select(BulkImport).order_by(BulkImport.id.desc()).limit(limit).offset(offset)
     ).scalars().all()
     return _summaries(db, list(jobs))
+
+
+@router.get("/activity", response_model=BulkActivityOut)
+def activity(db: Session = Depends(get_db)):
+    """Totals across all lists, so the count is right however many lists there are."""
+    live = BulkImport.status.in_(("running", "stopping"))
+    counts = dict(db.execute(
+        select(BulkImportRow.status, func.count())
+        .join(BulkImport, BulkImport.id == BulkImportRow.import_id)
+        .where(live, BulkImportRow.status.in_(("queued", "checking")))
+        .group_by(BulkImportRow.status)
+    ).all())
+    return BulkActivityOut(
+        running_imports=db.scalar(select(func.count()).select_from(BulkImport).where(live)) or 0,
+        checking=counts.get("checking", 0),
+        waiting=counts.get("queued", 0),
+        concurrency=settings.bulk_import_concurrency,
+    )
 
 
 @router.get("/{import_id}", response_model=BulkImportOut)

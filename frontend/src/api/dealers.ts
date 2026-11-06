@@ -115,6 +115,9 @@ export interface DealerListParams {
   provider?: string;
   q?: string;
   ids?: string;
+  /** failed | incomplete | success | never | no_vehicles */
+  sync_status?: string;
+  added_within_days?: number;
   sort?: string;
   order?: 'asc' | 'desc';
   limit?: number;

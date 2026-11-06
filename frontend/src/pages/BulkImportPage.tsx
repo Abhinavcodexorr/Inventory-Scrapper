@@ -10,11 +10,13 @@ import { getErrorMessage } from '../api/client';
 import { listProviders } from '../api/dealers';
 import { createBulkImport, listBulkImports, previewBulkImport } from '../api/bulkImports';
 import { DataTable, PageHeader, SectionCard, StatusChip, type Column } from '../components/ui';
-import type { BulkImport, BulkPreview, BulkPreviewRow } from '../types';
+import type { BulkPreview, BulkPreviewRow } from '../types';
+import { bulkImportColumns } from './bulkImportColumns';
 import { parseBulkList } from '../utils/bulkList';
-import { formatRelative } from '../utils/format';
 
 const MAX_ROWS = 5000;
+const CSV_FORMAT_URL = '/bulk-dealers-template.csv';
+const CSV_FORMAT_NAME = 'dealer-websites-format.csv';
 
 const previewColumns: Column<BulkPreviewRow>[] = [
   { key: 'position', header: 'Row', width: 70, value: (r) => r.position },
@@ -27,16 +29,6 @@ const previewColumns: Column<BulkPreviewRow>[] = [
     render: (r) => <StatusChip status={r.status === 'queued' ? 'ready' : r.status} />,
   },
   { key: 'reason', header: 'Note', minWidth: 220, render: (r) => r.reason ?? '' },
-];
-
-const historyColumns: Column<BulkImport>[] = [
-  { key: 'created', header: 'Started', render: (j) => formatRelative(j.created_at) },
-  { key: 'list', header: 'List', render: (j) => j.filename || 'Pasted list' },
-  { key: 'provider', header: 'Provider', render: (j) => j.provider || 'Auto-detect' },
-  { key: 'status', header: 'Status', render: (j) => <StatusChip status={j.status} /> },
-  { key: 'total', header: 'Websites', align: 'right', value: (j) => j.total },
-  { key: 'added', header: 'Added', align: 'right', value: (j) => j.added },
-  { key: 'failed', header: 'Failed', align: 'right', value: (j) => j.failed },
 ];
 
 export function BulkImportPage() {
@@ -114,17 +106,42 @@ export function BulkImportPage() {
           <Button
             variant="outlined"
             component="a"
-            href="/bulk-dealers-template.csv"
-            download
+            href={CSV_FORMAT_URL}
+            download={CSV_FORMAT_NAME}
             startIcon={<DownloadRoundedIcon />}
           >
-            Download template
+            Download CSV format
           </Button>
         }
       />
 
       <SectionCard title="Your list" sx={{ mb: 2 }}>
         <Box sx={{ display: 'grid', gap: 2 }}>
+          <Alert severity="info" icon={false}>
+            <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+              Adding from a CSV
+            </Typography>
+            <Box component="ol" sx={{ m: 0, pl: 2.5, '& li': { mb: 0.25 } }}>
+              <li>
+                <Button
+                  size="small"
+                  component="a"
+                  href={CSV_FORMAT_URL}
+                  download={CSV_FORMAT_NAME}
+                  startIcon={<DownloadRoundedIcon />}
+                  sx={{ py: 0, minHeight: 0, verticalAlign: 'baseline' }}
+                >
+                  Download the CSV format
+                </Button>
+              </li>
+              <li>
+                Open it in Excel or Google Sheets and add one website per row. Only the <strong>website</strong>{' '}
+                column is required; name, address, city, province, postal code, phone and provider are optional.
+                The sample row can stay, it is ignored.
+              </li>
+              <li>Save it as CSV and upload it below.</li>
+            </Box>
+          </Alert>
           <Autocomplete
             freeSolo
             options={[...(providersQ.data ?? [])].sort()}
@@ -228,10 +245,18 @@ export function BulkImportPage() {
       )}
 
       {(historyQ.data?.length ?? 0) > 0 && (
-        <SectionCard flush title="Past imports">
+        <SectionCard
+          flush
+          title="Recent imports"
+          actions={
+            <Button size="small" component={RouterLink} to="/dealers/imports">
+              View all
+            </Button>
+          }
+        >
           <DataTable
-            rows={historyQ.data ?? []}
-            columns={historyColumns}
+            rows={(historyQ.data ?? []).slice(0, 5)}
+            columns={bulkImportColumns}
             getRowId={(j) => j.id}
             onRowClick={(j) => navigate(`/dealers/bulk/${j.id}`)}
             storageKey="bulk-history"

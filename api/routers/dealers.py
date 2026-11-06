@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
@@ -278,6 +278,17 @@ _DEALER_SORTS = {
     "last_sync_duration_seconds": Dealer.last_sync_duration_seconds,
     "last_synced_at": Dealer.last_synced_at,
     "active": Dealer.active,
+    "created_at": Dealer.created_at,
+}
+
+# How each "Last sync" filter reads the dealer's denormalized last-sync fields.
+_SYNC_FILTERS = {
+    "failed": Dealer.last_sync_status == "failed",
+    "incomplete": Dealer.last_sync_status == "incomplete",
+    "success": Dealer.last_sync_status.in_(("success", "completed")),
+    "never": Dealer.last_synced_at.is_(None),
+    # Synced, but found nothing: a dead feed or a site that changed.
+    "no_vehicles": Dealer.last_synced_at.is_not(None) & (func.coalesce(Dealer.inventory_count, 0) == 0),
 }
 
 
@@ -296,6 +307,10 @@ def list_dealers(
     provider: str | None = Query(None, description="Filter by website_provider"),
     q: str | None = Query(None, description="Search name, website, city or provider"),
     ids: str | None = Query(None, description="Comma-separated dealer ids to return"),
+    sync_status: str | None = Query(
+        None, description=f"Last sync result. One of: {', '.join(_SYNC_FILTERS)}"),
+    added_within_days: int | None = Query(
+        None, ge=1, le=3650, description="Only dealers added in the last N days"),
     sort: str = Query("name", description=f"One of: {', '.join(_DEALER_SORTS)}"),
     order: str = Query("asc", pattern="^(asc|desc)$"),
     limit: int | None = Query(None, ge=1, le=500, description="Page size. Omit for all."),
@@ -316,6 +331,13 @@ def list_dealers(
         filters.append(Dealer.website_provider == provider)
     if ids is not None:
         filters.append(Dealer.id.in_(_parse_ids(ids)))
+    if sync_status:
+        if sync_status not in _SYNC_FILTERS:
+            raise HTTPException(
+                status_code=422, detail=f"sync_status must be one of: {', '.join(_SYNC_FILTERS)}")
+        filters.append(_SYNC_FILTERS[sync_status])
+    if added_within_days:
+        filters.append(Dealer.created_at >= datetime.now(timezone.utc) - timedelta(days=added_within_days))
     if q:
         filters.append(or_(*(column.icontains(q, autoescape=True) for column in (
             Dealer.name, Dealer.base_url, Dealer.city, Dealer.website_provider))))

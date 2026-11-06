@@ -164,7 +164,7 @@ Without any of this the app still works end-to-end on the in-process fallback.
 
 ## Adding many dealers at once
 
-**Dealers → Bulk add** takes a CSV (see "Download template") or pasted addresses,
+**Dealers → Bulk add** takes a CSV (see "Download CSV format"; only the `website` column is required) or pasted addresses,
 plus a website provider for the whole list. Each new website is checked in the
 background, five at a time (`BULK_IMPORT_CONCURRENCY`; the worker
 pool, `CELERY_WORKER_CONCURRENCY`, must be at least as large), and added only if the

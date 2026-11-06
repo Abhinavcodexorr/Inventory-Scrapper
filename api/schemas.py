@@ -110,6 +110,14 @@ class BulkImportOut(BaseModel):
     checking: int = 0
 
 
+class BulkActivityOut(BaseModel):
+    """Bulk work right now, across every list."""
+    running_imports: int        # lists still being worked through
+    checking: int               # websites being checked at this moment
+    waiting: int                # websites still waiting for their turn
+    concurrency: int            # websites checked at once (BULK_IMPORT_CONCURRENCY)
+
+
 class BulkImportRowOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

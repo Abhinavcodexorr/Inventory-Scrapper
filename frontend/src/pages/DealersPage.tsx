@@ -22,6 +22,7 @@ import {
 import { alpha, useTheme } from '@mui/material/styles';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
+import HistoryRoundedIcon from '@mui/icons-material/HistoryRounded';
 import SyncRoundedIcon from '@mui/icons-material/SyncRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import MoreHorizRoundedIcon from '@mui/icons-material/MoreHorizRounded';
@@ -56,6 +57,7 @@ import {
   type SortState,
 } from '../components/ui';
 import { useDashboardSummary, useDealerPage, useSuccessTally } from '../hooks/useDealers';
+import { useBulkActivity } from '../hooks/useBulkActivity';
 import { useDebouncedValue } from '../utils/useDebouncedValue';
 import { useTokens } from '../theme/useTokens';
 import { useAppSettings } from '../theme/settings';
@@ -65,6 +67,33 @@ import type { Dealer } from '../types';
 import { isRunSuccess } from '../utils/runStatus';
 
 type View = 'grid' | 'table';
+
+const DEFAULT_SORT: SortState = { key: 'created_at', dir: 'desc' };
+
+const SORT_OPTIONS = [
+  { value: 'created_at:desc', label: 'Newest added' },
+  { value: 'created_at:asc', label: 'Oldest added' },
+  { value: 'name:asc', label: 'Name A–Z' },
+  { value: 'name:desc', label: 'Name Z–A' },
+  { value: 'last_synced_at:desc', label: 'Recently synced' },
+  { value: 'inventory_count:desc', label: 'Most vehicles' },
+  { value: 'inventory_count:asc', label: 'Fewest vehicles' },
+];
+
+const SYNC_OPTIONS = [
+  { value: 'failed', label: 'Failed to scrape' },
+  { value: 'incomplete', label: 'Incomplete' },
+  { value: 'no_vehicles', label: 'Synced, 0 vehicles' },
+  { value: 'never', label: 'Never synced' },
+  { value: 'success', label: 'Succeeded' },
+];
+
+const ADDED_OPTIONS = [
+  { value: '1', label: 'Last 24 hours' },
+  { value: '7', label: 'Last 7 days' },
+  { value: '30', label: 'Last 30 days' },
+  { value: '90', label: 'Last 90 days' },
+];
 const VIEW_STORAGE_KEY = 'inventory-hub.dealers.view';
 
 export function DealersPage() {
@@ -76,6 +105,8 @@ export function DealersPage() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [provider, setProvider] = useState('');
+  const [syncStatus, setSyncStatus] = useState('');
+  const [added, setAdded] = useState('');
   const [page, setPage] = useState(0);
   const [view, setView] = useState<View>(
     () => (localStorage.getItem(VIEW_STORAGE_KEY) as View | null) ?? 'grid',
@@ -88,10 +119,10 @@ export function DealersPage() {
   const debouncedSearch = useDebouncedValue(search);
 
   useEffect(() => localStorage.setItem(VIEW_STORAGE_KEY, view), [view]);
-  useEffect(() => setPage(0), [debouncedSearch, status, provider]);
+  useEffect(() => setPage(0), [debouncedSearch, status, provider, syncStatus, added]);
 
   const providersQ = useQuery({ queryKey: ['providers'], queryFn: listProviders });
-  const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' });
+  const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   useEffect(() => setPage(0), [sort]);
 
   const pageSize = settings.pageSize;
@@ -99,6 +130,8 @@ export function DealersPage() {
     q: debouncedSearch.trim() || undefined,
     active: status ? status === 'active' : undefined,
     provider: provider || undefined,
+    sync_status: syncStatus || undefined,
+    added_within_days: added ? Number(added) : undefined,
     sort: sort.key,
     order: sort.dir,
     limit: pageSize,
@@ -115,7 +148,11 @@ export function DealersPage() {
     if (dealersQ.isError) enqueueSnackbar(getErrorMessage(dealersQ.error), { variant: 'error' });
   }, [dealersQ.isError, dealersQ.error, enqueueSnackbar]);
 
-  const activeFilterCount = [debouncedSearch, status, provider].filter(Boolean).length;
+  const activeFilterCount = [debouncedSearch, status, provider, syncStatus, added].filter(Boolean).length;
+  const sortValue = `${sort.key}:${sort.dir}`;
+  const sortOptions = SORT_OPTIONS.some((o) => o.value === sortValue)
+    ? SORT_OPTIONS
+    : [...SORT_OPTIONS, { value: sortValue, label: 'Table column' }];
 
   const invalidateDealers = () => {
     qc.invalidateQueries({ queryKey: ['dealers'] });
@@ -283,6 +320,18 @@ export function DealersPage() {
         ),
       },
       {
+        key: 'created_at',
+        header: 'Added',
+        width: 120,
+        hint: 'When this website was added',
+        value: (d) => d.created_at,
+        render: (d) => (
+          <Typography variant="body2" color="text.secondary">
+            {formatRelative(d.created_at)}
+          </Typography>
+        ),
+      },
+      {
         key: 'active',
         header: 'Status',
         width: 110,
@@ -318,6 +367,8 @@ export function DealersPage() {
   );
 
   const showEmptyState = !dealersQ.isLoading && total === 0;
+  const bulk = useBulkActivity().data;
+  const bulkBusy = bulk ? bulk.checking + bulk.waiting > 0 : false;
 
   return (
     <Box>
@@ -331,6 +382,9 @@ export function DealersPage() {
         }
         actions={
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            <Button variant="outlined" component={RouterLink} to="/dealers/imports" startIcon={<HistoryRoundedIcon />}>
+              Past imports{bulkBusy ? ` (${(bulk!.checking + bulk!.waiting).toLocaleString()} left)` : ''}
+            </Button>
             <Button variant="outlined" component={RouterLink} to="/dealers/bulk" startIcon={<UploadFileRoundedIcon />}>
               Bulk add
             </Button>
@@ -341,12 +395,32 @@ export function DealersPage() {
         }
       />
 
+      {bulkBusy && (
+        <Alert
+          severity="info"
+          icon={<CircularProgress size={18} />}
+          sx={{ mb: 2 }}
+          action={
+            <Button color="inherit" size="small" component={RouterLink} to="/dealers/imports">
+              View imports
+            </Button>
+          }
+        >
+          Bulk import running: <strong>{bulk!.checking.toLocaleString()}</strong> website
+          {bulk!.checking === 1 ? '' : 's'} in process, <strong>{bulk!.waiting.toLocaleString()}</strong> waiting
+          {bulk!.running_imports > 1 ? ` across ${bulk!.running_imports} lists` : ''}.
+        </Alert>
+      )}
+
       <FilterBar
         activeCount={activeFilterCount}
         onReset={() => {
           setSearch('');
           setStatus('');
           setProvider('');
+          setSyncStatus('');
+          setAdded('');
+          setSort(DEFAULT_SORT);
         }}
         trailing={
           <ToggleButtonGroup
@@ -382,6 +456,19 @@ export function DealersPage() {
           ]}
         />
         <FilterSelect label="Provider" value={provider} onChange={setProvider} width={172} options={providerOptions} />
+        <FilterSelect label="Last sync" value={syncStatus} onChange={setSyncStatus} width={178} options={SYNC_OPTIONS} />
+        <FilterSelect label="Added" value={added} onChange={setAdded} width={150} allLabel="Any time" options={ADDED_OPTIONS} />
+        <FilterSelect
+          label="Sort by"
+          value={sortValue}
+          onChange={(v) => {
+            const [key, dir] = v.split(':');
+            setSort({ key, dir: dir as SortState['dir'] });
+          }}
+          width={168}
+          required
+          options={sortOptions}
+        />
       </FilterBar>
 
       {dealersQ.isError && (

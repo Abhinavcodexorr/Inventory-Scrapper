@@ -6,7 +6,7 @@ Run:  python -m tests.test_fleet_endpoints
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -62,6 +62,31 @@ def test_list_pages_searches_and_sorts_on_the_server() -> None:
         assert [d["name"] for d in c.get("/api/dealers", params={"q": q}).json()] == [name]
     # A LIKE wildcard in the search is text, not a pattern.
     assert c.get("/api/dealers", params={"q": "%"}).json() == []
+
+
+def test_list_filters_by_last_sync_and_sorts_newest_first() -> None:
+    ids = _seed()
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as s:
+        for key, status, added_days_ago in (("alpha", "success", 40), ("beta", "failed", 2),
+                                            ("group", "success", 1)):
+            d = s.get(Dealer, ids[key])
+            d.last_sync_status, d.last_synced_at = status, now
+            d.created_at = now - timedelta(days=added_days_ago)
+        s.get(Dealer, ids["retired"]).created_at = now - timedelta(days=400)
+        s.commit()
+    c = _client()
+
+    def names(**params: object) -> list[str]:
+        return [d["name"] for d in c.get("/api/dealers", params=params).json()]
+
+    assert names(sort="created_at", order="desc") == ["Group Store", "Beta Cars", "Alpha Motors", "Retired"]
+    assert names(sync_status="failed") == ["Beta Cars"]
+    assert names(sync_status="success") == ["Alpha Motors", "Group Store"]
+    assert names(sync_status="never") == ["Retired"]
+    assert names(sync_status="no_vehicles") == ["Group Store"]
+    assert names(added_within_days=7, sort="created_at", order="desc") == ["Group Store", "Beta Cars"]
+    assert c.get("/api/dealers", params={"sync_status": "bogus"}).status_code == 422
 
 
 def test_list_returns_requested_ids_only() -> None:
@@ -147,6 +172,7 @@ def test_dashboard_aggregates() -> None:
 
 def main() -> None:
     test_list_pages_searches_and_sorts_on_the_server()
+    test_list_filters_by_last_sync_and_sorts_newest_first()
     test_list_returns_requested_ids_only()
     test_lookup_ignores_scheme_www_and_trailing_slash()
     test_create_refuses_the_same_site_written_differently()

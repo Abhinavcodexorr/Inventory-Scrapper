@@ -466,6 +466,17 @@ export interface BulkImport {
   checking: number;
 }
 
+/** Bulk work right now, across every list. */
+export interface BulkActivity {
+  running_imports: number;
+  /** Websites being checked at this moment. */
+  checking: number;
+  /** Websites still waiting for their turn. */
+  waiting: number;
+  /** Websites checked at once. */
+  concurrency: number;
+}
+
 export interface BulkImportRowResult {
   id: number;
   position: number;
