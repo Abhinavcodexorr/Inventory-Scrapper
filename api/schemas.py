@@ -58,6 +58,73 @@ class DealerCreate(DealerBase):
     )
 
 
+class BulkRowIn(BaseModel):
+    """One line of a bulk list. Lengths are enforced per row by the import, so one
+    over-long cell fails that row rather than the whole upload."""
+    website: str = ""
+    name: str | None = None
+    address: str | None = None
+    city: str | None = None
+    province: str | None = None
+    postal_code: str | None = None
+    phone: str | None = None
+    provider: str | None = None
+
+
+class BulkImportIn(BaseModel):
+    provider: str | None = Field(None, max_length=120)
+    filename: str | None = Field(None, max_length=200)
+    rows: list[BulkRowIn] = Field(..., min_length=1, max_length=5000)
+
+
+class BulkPreviewRowOut(BaseModel):
+    position: int
+    website: str
+    name: str | None = None
+    provider: str | None = None
+    status: str                # queued | invalid | duplicate
+    reason: str | None = None
+
+
+class BulkPreviewOut(BaseModel):
+    ready: int
+    invalid: int
+    duplicate: int
+    rows: list[BulkPreviewRowOut]
+
+
+class BulkImportOut(BaseModel):
+    id: int
+    filename: str | None
+    provider: str | None
+    status: str
+    notice: str | None
+    created_at: datetime
+    finished_at: datetime | None
+    total: int = 0
+    added: int = 0
+    failed: int = 0            # could not be added, including invalid addresses
+    duplicate: int = 0         # already in the tool, or repeated in the list
+    skipped: int = 0           # the import was stopped before reaching it
+    waiting: int = 0
+    checking: int = 0
+
+
+class BulkImportRowOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    position: int
+    website: str
+    name: str | None
+    provider: str | None
+    status: str
+    reason: str | None
+    dealer_id: int | None
+    vehicles_found: int | None
+    finished_at: datetime | None
+
+
 class DiscoverIn(BaseModel):
     """Auto-discovery input — the dealer's website URL is all that's needed.
 

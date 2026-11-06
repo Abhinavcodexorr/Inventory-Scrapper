@@ -95,6 +95,14 @@ export function CommandPalette({ open, onClose, onRunScraper }: Props) {
         run: () => go('/dealers/new'),
       },
       {
+        id: 'action:bulk-add-dealers',
+        group: 'Actions',
+        label: 'Bulk add dealerships',
+        hint: 'Add many websites from a list',
+        icon: <AddRoundedIcon />,
+        run: () => go('/dealers/bulk'),
+      },
+      {
         id: 'action:run-scraper',
         group: 'Actions',
         label: 'Run scraper on all active dealers',

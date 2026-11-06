@@ -259,6 +259,61 @@ class DiscoveryRun(Base):
     options: Mapped[dict | None] = mapped_column(JsonType)
 
 
+class BulkImport(Base):
+    """One uploaded list of dealer websites, worked through in the background.
+
+    Counts are derived from the rows rather than stored, so the report can never
+    disagree with the rows it summarises.
+    """
+    __tablename__ = "bulk_imports"
+
+    id: Mapped[int] = mapped_column(BigIntPk, primary_key=True)
+    filename: Mapped[str | None] = mapped_column(String(200))
+    provider: Mapped[str | None] = mapped_column(String(120))     # as selected for the whole list
+    # running | stopping | completed | stopped
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    # Why nothing is moving right now (e.g. no worker). Cleared once it moves again.
+    notice: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class BulkImportRow(Base):
+    """One website in a bulk import.
+
+    dealer_id and discovery_run_id are deliberately plain integers: this is a
+    historical report, and a foreign key would make it block deleting a dealer.
+    """
+    __tablename__ = "bulk_import_rows"
+    __table_args__ = (
+        Index("ix_bulk_import_rows_import_position", "import_id", "position"),
+        Index("ix_bulk_import_rows_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(BigIntPk, primary_key=True)
+    import_id: Mapped[int] = mapped_column(ForeignKey("bulk_imports.id", ondelete="CASCADE"), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-based, as in the uploaded list
+
+    website: Mapped[str] = mapped_column(String(500), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(200))
+    address: Mapped[str | None] = mapped_column(String(300))
+    city: Mapped[str | None] = mapped_column(String(120))
+    province: Mapped[str | None] = mapped_column(String(80))
+    postal_code: Mapped[str | None] = mapped_column(String(20))
+    phone: Mapped[str | None] = mapped_column(String(40))
+    provider: Mapped[str | None] = mapped_column(String(120))
+
+    # queued | checking | added | failed | invalid | duplicate | skipped
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
+    reason: Mapped[str | None] = mapped_column(String(1000))
+    discovery_run_id: Mapped[int | None] = mapped_column(BigInteger)
+    dispatch_mode: Mapped[str | None] = mapped_column(String(20))   # celery | local
+    dealer_id: Mapped[int | None] = mapped_column(Integer)
+    vehicles_found: Mapped[int | None] = mapped_column(Integer)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class SitePattern(Base):
     """A pattern discovery has previously confirmed for a host (listing URL,
     API endpoint shape, pagination, field_map, card selector, CMS fingerprint)

@@ -137,6 +137,15 @@ class Settings(BaseSettings):
     # also spreads load on our own workers and proxy pool.
     daily_sync_stagger_seconds: int = 30
 
+    # -- Bulk dealer import (api/bulk_runner.py) --
+    # Websites from bulk lists being checked at once, across all lists. Checks share
+    # the workers with scrapes, so this stays below their concurrency: a long list
+    # then cannot crowd out the daily sync.
+    bulk_import_concurrency: int = 2
+    # A check still waiting for a worker after this long counts as failed. Generous
+    # because it queues behind the daily sync.
+    bulk_import_queued_timeout_seconds: int = 6 * 3600
+
     # -- Discovery engine (dealer_scraper/discovery/) --
     # Overall wall-clock budget for one discovery run (DiscoveryContext.deadline).
     discovery_budget_seconds: float = 300.0

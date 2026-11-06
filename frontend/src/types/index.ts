@@ -420,3 +420,62 @@ export interface ChangeListParams {
 export interface ApiError {
   detail?: string | { msg: string }[];
 }
+
+export interface BulkRow {
+  website: string;
+  name?: string;
+  address?: string;
+  city?: string;
+  province?: string;
+  postal_code?: string;
+  phone?: string;
+  provider?: string;
+}
+
+export interface BulkPreviewRow {
+  position: number;
+  website: string;
+  name: string | null;
+  provider: string | null;
+  status: string;
+  reason: string | null;
+}
+
+export interface BulkPreview {
+  ready: number;
+  invalid: number;
+  duplicate: number;
+  rows: BulkPreviewRow[];
+}
+
+export interface BulkImport {
+  id: number;
+  filename: string | null;
+  provider: string | null;
+  /** running | stopping | completed | stopped */
+  status: string;
+  notice: string | null;
+  created_at: string;
+  finished_at: string | null;
+  total: number;
+  added: number;
+  failed: number;
+  duplicate: number;
+  skipped: number;
+  waiting: number;
+  checking: number;
+}
+
+export interface BulkImportRowResult {
+  id: number;
+  position: number;
+  website: string;
+  name: string | null;
+  provider: string | null;
+  /** queued | checking | added | failed | invalid | duplicate | skipped */
+  status: string;
+  reason: string | null;
+  dealer_id: number | null;
+  vehicles_found: number | null;
+  finished_at: string | null;
+}

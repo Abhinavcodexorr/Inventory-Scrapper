@@ -85,7 +85,8 @@ def _require_proven_site_or_409(db: Session, base_url: str) -> None:
         return
     runs = db.execute(
         select(DiscoveryRun)
-        .where(DiscoveryRun.status == "completed")
+        .where(DiscoveryRun.status == "completed",
+               DiscoveryRun.base_url.icontains(host, autoescape=True))
         .order_by(DiscoveryRun.id.desc())
         .limit(50)
     ).scalars().all()
@@ -124,7 +125,8 @@ def _detected_platform_for(db: Session, base_url: str) -> str | None:
         return None
     runs = db.execute(
         select(DiscoveryRun)
-        .where(DiscoveryRun.status == "completed")
+        .where(DiscoveryRun.status == "completed",
+               DiscoveryRun.base_url.icontains(host, autoescape=True))
         .order_by(DiscoveryRun.id.desc())
         .limit(50)
     ).scalars().all()

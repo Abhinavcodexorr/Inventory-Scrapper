@@ -21,6 +21,7 @@ import {
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
 import SyncRoundedIcon from '@mui/icons-material/SyncRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import MoreHorizRoundedIcon from '@mui/icons-material/MoreHorizRounded';
@@ -329,9 +330,14 @@ export function DealersPage() {
             : undefined
         }
         actions={
-          <Button variant="contained" component={RouterLink} to="/dealers/new" startIcon={<AddRoundedIcon />}>
-            Add dealership
-          </Button>
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            <Button variant="outlined" component={RouterLink} to="/dealers/bulk" startIcon={<UploadFileRoundedIcon />}>
+              Bulk add
+            </Button>
+            <Button variant="contained" component={RouterLink} to="/dealers/new" startIcon={<AddRoundedIcon />}>
+              Add dealership
+            </Button>
+          </Box>
         }
       />
 

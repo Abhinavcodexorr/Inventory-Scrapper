@@ -34,6 +34,15 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   ready: 'success',
   needs_review: 'warning',
   unsupported: 'danger',
+  // bulk imports
+  waiting: 'info',
+  checking: 'live',
+  added: 'success',
+  invalid: 'danger',
+  duplicate: 'neutral',
+  skipped: 'neutral',
+  stopping: 'warning',
+  stopped: 'neutral',
 };
 
 const LABEL_OVERRIDES: Record<string, string> = {
@@ -41,6 +50,8 @@ const LABEL_OVERRIDES: Record<string, string> = {
   failure: 'Failed',
   success: 'Success',
   needs_review: 'Needs review',
+  invalid: 'Invalid address',
+  duplicate: 'Already exists',
 };
 
 interface Props {

@@ -19,9 +19,10 @@ from sqlalchemy.orm import Session
 
 from dealer_scraper.config import settings
 from worker.celery_app import broker_available, workers_available
+from . import bulk_runner
 from .deps import get_db, require_auth
 from .routers import auth as auth_router
-from .routers import changes, dashboard, dealers, vehicles
+from .routers import bulk_imports, changes, dashboard, dealers, vehicles
 
 log = logging.getLogger("api.main")
 
@@ -103,7 +104,9 @@ def _warm_readiness_checks() -> None:
 async def lifespan(app: FastAPI):
     threading.Thread(target=_warm_broker_probe, daemon=True).start()
     threading.Thread(target=_warm_readiness_checks, daemon=True).start()
+    bulk_runner.start()
     yield
+    bulk_runner.stop()
 
 
 app = FastAPI(
@@ -138,6 +141,7 @@ app.add_middleware(
 # newly added endpoint cannot forget it.
 app.include_router(auth_router.router)
 app.include_router(dealers.router, dependencies=[Depends(require_auth)])
+app.include_router(bulk_imports.router, dependencies=[Depends(require_auth)])
 app.include_router(vehicles.router, dependencies=[Depends(require_auth)])
 app.include_router(dashboard.router, dependencies=[Depends(require_auth)])
 app.include_router(changes.router, dependencies=[Depends(require_auth)])

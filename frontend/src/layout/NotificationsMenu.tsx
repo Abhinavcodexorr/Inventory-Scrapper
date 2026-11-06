@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Badge, Box, Divider, IconButton, Menu, Tooltip, Typography } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import NotificationsNoneRoundedIcon from '@mui/icons-material/NotificationsNoneRounded';
@@ -7,6 +8,7 @@ import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
 import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded';
 import TrendingDownRoundedIcon from '@mui/icons-material/TrendingDownRounded';
 import CheckCircleOutlineRoundedIcon from '@mui/icons-material/CheckCircleOutlineRounded';
+import { isBulkReportSeen, listBulkImports } from '../api/bulkImports';
 import { useDealerStats } from '../hooks/useDealers';
 import { useTokens } from '../theme/useTokens';
 import { formatRelative } from '../utils/format';
@@ -32,8 +34,13 @@ export function NotificationsMenu() {
   const navigate = useNavigate();
   const statsQ = useDealerStats({ attention: true, limit: 30 });
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const bulkQ = useQuery({
+    queryKey: ['bulk-imports', 'recent'],
+    queryFn: () => listBulkImports(10),
+    refetchInterval: 60_000,
+  });
 
-  const alerts = useMemo<Alert[]>(() => {
+  const dealerAlerts = useMemo<Alert[]>(() => {
     const out: Alert[] = [];
     for (const s of statsQ.data ?? []) {
       if (s.sync_status === 'failed') {
@@ -72,6 +79,22 @@ export function NotificationsMenu() {
     const rank: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
     return out.sort((a, b) => rank[a.severity] - rank[b.severity]).slice(0, 12);
   }, [statsQ.data]);
+
+  // Not memoised: opening a report marks it seen in browser storage, which no
+  // dependency would notice. Listed first so a busy fleet cannot push a report
+  // out of the list. A report stops being news after a week.
+  const reportAlerts: Alert[] = (bulkQ.data ?? [])
+    .filter((j) => j.finished_at && !isBulkReportSeen(j.id)
+      && Date.now() - new Date(j.finished_at).getTime() < 7 * 24 * 3600 * 1000)
+    .map((j) => ({
+      id: `bulk-${j.id}`,
+      severity: j.failed > 0 ? 'warning' : 'info',
+      title: `Bulk import finished: ${j.added.toLocaleString()} added, ${j.failed.toLocaleString()} failed`,
+      detail: `${j.total.toLocaleString()} websites in ${j.filename || 'pasted list'}. Open the report.`,
+      timestamp: j.finished_at,
+      to: `/dealers/bulk/${j.id}`,
+    }));
+  const alerts = [...reportAlerts, ...dealerAlerts].slice(0, 12);
 
   const colorFor = (severity: Severity) =>
     severity === 'error'

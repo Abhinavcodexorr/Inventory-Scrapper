@@ -9,6 +9,8 @@ import { DashboardPage } from './pages/DashboardPage';
 import { DealersPage } from './pages/DealersPage';
 import { DealerFormPage } from './pages/DealerFormPage';
 import { DealerDetailPage } from './pages/DealerDetailPage';
+import { BulkImportPage } from './pages/BulkImportPage';
+import { BulkImportReportPage } from './pages/BulkImportReportPage';
 import { VehiclesPage } from './pages/VehiclesPage';
 import { VehicleDetailPage } from './pages/VehicleDetailPage';
 import { JobsPage } from './pages/JobsPage';
@@ -40,6 +42,8 @@ export default function App() {
           <Route index element={<DashboardPage />} />
           <Route path="dealers" element={<DealersPage />} />
           <Route path="dealers/new" element={<DealerFormPage />} />
+          <Route path="dealers/bulk" element={<BulkImportPage />} />
+          <Route path="dealers/bulk/:id" element={<BulkImportReportPage />} />
           <Route path="dealers/:id" element={<DealerDetailPage />} />
           <Route path="dealers/:id/edit" element={<DealerFormPage />} />
           <Route path="vehicles" element={<VehiclesPage />} />
