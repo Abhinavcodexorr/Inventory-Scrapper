@@ -131,11 +131,11 @@ def test_a_blank_provider_falls_back_to_the_detected_platform() -> None:
 
 def test_no_more_than_the_limit_is_checked_at_once() -> None:
     client = _fresh_client()
-    client.post("/api/bulk-imports", json={"rows": _rows("a1.ca", "a2.ca", "a3.ca", "a4.ca")})
-    sites = Sites({f"https://a{i}.ca": {"hang": True} for i in range(1, 5)})
+    client.post("/api/bulk-imports", json={"rows": _rows(*(f"a{i}.ca" for i in range(1, 8)))})
+    sites = Sites({f"https://a{i}.ca": {"hang": True} for i in range(1, 8)})
     _run_all(sites, max_ticks=3)
-    assert sites.dispatched == ["https://a1.ca", "https://a2.ca"]
-    assert settings.bulk_import_concurrency == 2
+    assert settings.bulk_import_concurrency == 5
+    assert sites.dispatched == [f"https://a{i}.ca" for i in range(1, 6)]
 
 
 def test_a_killed_worker_fails_its_row_instead_of_hanging_the_import() -> None:

@@ -139,9 +139,10 @@ class Settings(BaseSettings):
 
     # -- Bulk dealer import (api/bulk_runner.py) --
     # Websites from bulk lists being checked at once, across all lists. Checks share
-    # the workers with scrapes, so this stays below their concurrency: a long list
-    # then cannot crowd out the daily sync.
-    bulk_import_concurrency: int = 2
+    # the workers with scrapes, so only min(this, CELERY_WORKER_CONCURRENCY) truly
+    # run at once; keep the workers above this so a long list cannot crowd out the
+    # daily sync. Each check runs a browser (~700 MB), so size the server to match.
+    bulk_import_concurrency: int = 5
     # A check still waiting for a worker after this long counts as failed. Generous
     # because it queues behind the daily sync.
     bulk_import_queued_timeout_seconds: int = 6 * 3600

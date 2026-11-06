@@ -166,7 +166,8 @@ Without any of this the app still works end-to-end on the in-process fallback.
 
 **Dealers → Bulk add** takes a CSV (see "Download template") or pasted addresses,
 plus a website provider for the whole list. Each new website is checked in the
-background, one or two at a time (`BULK_IMPORT_CONCURRENCY`), and added only if the
+background, five at a time (`BULK_IMPORT_CONCURRENCY`; the worker
+pool, `CELERY_WORKER_CONCURRENCY`, must be at least as large), and added only if the
 check finds vehicles. The report lists every row as added, failed or already
 existing, with the reason, and the bell icon says when it is ready. The chosen
 provider is a label: it never skips the check. New dealers get their vehicles on
