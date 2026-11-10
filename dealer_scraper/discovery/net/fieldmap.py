@@ -170,7 +170,38 @@ def _build_field_map(sample_items: list[dict], heuristics: HeuristicsConfig = DE
                    if isinstance(item, dict)):
             del field_map["source_status"]
 
+    _drop_non_unique_identity_fields(field_map, sample_items)
     return field_map
+
+
+# Fields the engine uses to tell one car from another. A leaf that holds the same
+# value for every car makes it treat the whole feed as a single vehicle.
+_IDENTITY_FIELDS = ("url", "external_id")
+_MIN_ROWS_TO_JUDGE = 3
+_MIN_DISTINCT_FRACTION = 0.8
+
+
+def _drop_non_unique_identity_fields(field_map: dict[str, str], sample_items: list[dict]) -> None:
+    """Remove a guessed url/external_id mapping whose values repeat across the sample.
+
+    Fields are matched by key name alone, so a leaf like `contact.url` (CarPages
+    feeds: the dealer's homepage) is picked up as the vehicle link. Every car then
+    carries the same link, the engine's dedup matches rows 2..N to row 1, and the
+    sync reports "43 rows but only 1 were distinct vehicles". Dropping the mapping
+    lets dedup fall back to VIN, which is unique."""
+    from ...adapters.json_api import _dig
+
+    items = [item for item in sample_items if isinstance(item, dict)]
+    for our_field in _IDENTITY_FIELDS:
+        path = field_map.get(our_field)
+        if not path:
+            continue
+        values = [_dig(item, path) for item in items]
+        values = [str(v) for v in values if v not in (None, "", [])]
+        if len(values) < _MIN_ROWS_TO_JUDGE:
+            continue
+        if len(set(values)) < len(values) * _MIN_DISTINCT_FRACTION:
+            del field_map[our_field]
 
 
 def _find_total_path(root, array_len: int, heuristics: HeuristicsConfig = DEFAULT_HEURISTICS) -> str | None:
