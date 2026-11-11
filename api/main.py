@@ -22,7 +22,7 @@ from worker.celery_app import broker_available, workers_available
 from . import bulk_runner
 from .deps import get_db, require_auth
 from .routers import auth as auth_router
-from .routers import bulk_imports, changes, dashboard, dealers, vehicles
+from .routers import bulk_imports, changes, dashboard, dealers, ingest, vehicles
 
 log = logging.getLogger("api.main")
 
@@ -141,6 +141,7 @@ app.add_middleware(
 # newly added endpoint cannot forget it.
 app.include_router(auth_router.router)
 app.include_router(dealers.router, dependencies=[Depends(require_auth)])
+app.include_router(ingest.router, dependencies=[Depends(require_auth)])
 app.include_router(bulk_imports.router, dependencies=[Depends(require_auth)])
 app.include_router(vehicles.router, dependencies=[Depends(require_auth)])
 app.include_router(dashboard.router, dependencies=[Depends(require_auth)])
