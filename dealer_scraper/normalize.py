@@ -243,6 +243,23 @@ def to_int(value) -> int | None:
     return int(float(cleaned)) if cleaned else None
 
 
+# mileage is a 32-bit INTEGER column. A feed that sends garbage here (Rj1Motors
+# sent 20134100000000000 for a 2013 Civic) makes the INSERT fail, and one bad
+# row then aborts the whole scrape. No road vehicle has anywhere near a million
+# km, so anything outside this range is treated as "not reported".
+MAX_MILEAGE = 2_000_000
+
+
+def sane_mileage(value) -> int | None:
+    try:
+        n = to_int(value)
+    except (ValueError, OverflowError):
+        return None
+    if n is None or n < 0 or n > MAX_MILEAGE:
+        return None
+    return n
+
+
 def to_decimal(value) -> Decimal | None:
     if value is None or value == "":
         return None
@@ -311,7 +328,7 @@ def normalize(raw: dict) -> NormalizedVehicle:
         model=_s(raw, "model", 120),
         year=to_int(raw.get("year")),
         trim=_s(raw, "trim", 120),
-        mileage=to_int(raw.get("mileage")),
+        mileage=sane_mileage(raw.get("mileage")),
         body_type=_s(raw, "body_type", 80),
         condition=_s(raw, "condition", 20),
         exterior_color=_s(raw, "exterior_color", 60),
