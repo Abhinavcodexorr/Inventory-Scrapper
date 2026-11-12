@@ -88,7 +88,7 @@ def today_local() -> date:
         return datetime.now(timezone.utc).date()
 
 
-def _local_tz():
+def local_tz():
     from .config import settings
 
     try:
@@ -97,6 +97,16 @@ def _local_tz():
         return ZoneInfo(settings.daily_sync_timezone or "UTC")
     except Exception:
         return timezone.utc
+
+
+def start_of_local_day() -> datetime:
+    """Midnight at the start of today where the dealers are, as a UTC instant.
+
+    "Today's sync" means since this moment. The daily sync is scheduled in this
+    timezone, so a server-local or UTC midnight would split one night's run in two.
+    """
+    now = datetime.now(local_tz())
+    return now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
 
 
 def days_in_stock(
@@ -118,7 +128,7 @@ def days_in_stock(
     if stop is not None:
         if stop.tzinfo is None:
             stop = stop.replace(tzinfo=timezone.utc)
-        end = min(end, stop.astimezone(_local_tz()).date())
+        end = min(end, stop.astimezone(local_tz()).date())
     return max(0, (end - stock_date).days)
 
 

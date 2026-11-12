@@ -522,6 +522,14 @@ class RunStatsOut(BaseModel):
     avg_duration_seconds: float
 
 
+class TodaySyncCounts(BaseModel):
+    """Where each dealership stands in today's sync. Buckets never overlap."""
+    running: int     # a scrape is in progress right now
+    pending: int     # active, not synced yet today, not running: still waiting
+    done: int        # synced today and it succeeded
+    failed: int      # synced today and it failed or came back incomplete
+
+
 class SyncAllOut(BaseModel):
     queued: int
     already_running: int

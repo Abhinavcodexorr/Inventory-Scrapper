@@ -39,6 +39,7 @@ import {
   deleteDealer,
   listProviders,
   syncDealer,
+  type TodaySyncBucket,
 } from '../api/dealers';
 import { getErrorMessage } from '../api/client';
 import {
@@ -56,6 +57,7 @@ import {
   type Column,
   type SortState,
 } from '../components/ui';
+import { TodaySyncFilter } from '../components/TodaySyncFilter';
 import { useDashboardSummary, useDealerPage, useSuccessTally } from '../hooks/useDealers';
 import { useBulkActivity } from '../hooks/useBulkActivity';
 import { useDebouncedValue } from '../utils/useDebouncedValue';
@@ -115,6 +117,7 @@ export function DealersPage() {
   const [provider, setProvider] = useState('');
   const [syncStatus, setSyncStatus] = useState('');
   const [added, setAdded] = useState('');
+  const [todaySync, setTodaySync] = useState<TodaySyncBucket | ''>('');
   const [page, setPage] = useState(0);
   const [view, setView] = useState<View>(
     () => (localStorage.getItem(VIEW_STORAGE_KEY) as View | null) ?? 'grid',
@@ -127,7 +130,7 @@ export function DealersPage() {
   const debouncedSearch = useDebouncedValue(search);
 
   useEffect(() => localStorage.setItem(VIEW_STORAGE_KEY, view), [view]);
-  useEffect(() => setPage(0), [debouncedSearch, status, provider, syncStatus, added]);
+  useEffect(() => setPage(0), [debouncedSearch, status, provider, syncStatus, added, todaySync]);
 
   const providersQ = useQuery({ queryKey: ['providers'], queryFn: listProviders });
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
@@ -139,6 +142,7 @@ export function DealersPage() {
     active: status ? status === 'active' : undefined,
     provider: provider || undefined,
     sync_status: syncStatus || undefined,
+    today_sync: todaySync || undefined,
     added_within_days: added ? Number(added) : undefined,
     sort: sort.key,
     order: sort.dir,
@@ -156,7 +160,7 @@ export function DealersPage() {
     if (dealersQ.isError) enqueueSnackbar(getErrorMessage(dealersQ.error), { variant: 'error' });
   }, [dealersQ.isError, dealersQ.error, enqueueSnackbar]);
 
-  const activeFilterCount = [debouncedSearch, status, provider, syncStatus, added].filter(Boolean).length;
+  const activeFilterCount = [debouncedSearch, status, provider, syncStatus, added, todaySync].filter(Boolean).length;
   const sortValue = `${sort.key}:${sort.dir}`;
   const sortOptions = SORT_OPTIONS.some((o) => o.value === sortValue)
     ? SORT_OPTIONS
@@ -432,6 +436,7 @@ export function DealersPage() {
           setProvider('');
           setSyncStatus('');
           setAdded('');
+          setTodaySync('');
           setSort(DEFAULT_SORT);
         }}
         trailing={
@@ -468,6 +473,7 @@ export function DealersPage() {
           ]}
         />
         <FilterSelect label="Provider" value={provider} onChange={setProvider} width={172} options={providerOptions} />
+        <TodaySyncFilter value={todaySync} onChange={setTodaySync} />
         <FilterSelect label="Last sync" value={syncStatus} onChange={setSyncStatus} width={178} options={SYNC_OPTIONS} />
         <FilterSelect label="Added" value={added} onChange={setAdded} width={150} allLabel="Any time" options={ADDED_OPTIONS} />
         <FilterSelect
@@ -514,6 +520,9 @@ export function DealersPage() {
                     setSearch('');
                     setStatus('');
                     setProvider('');
+                    setSyncStatus('');
+                    setAdded('');
+                    setTodaySync('');
                   }}
                 >
                   Clear filters

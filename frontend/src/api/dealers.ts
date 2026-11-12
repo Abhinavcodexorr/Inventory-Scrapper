@@ -110,6 +110,25 @@ export async function cancelDiscoveryRun(runId: number, jobId?: string) {
   return data;
 }
 
+/** Where each dealership stands in today's sync. Buckets never overlap. */
+export interface TodaySyncCounts {
+  /** A scrape is in progress right now. */
+  running: number;
+  /** Active, not synced yet today, not running: still waiting. */
+  pending: number;
+  /** Synced today and it succeeded. */
+  done: number;
+  /** Synced today and it failed or came back incomplete. */
+  failed: number;
+}
+
+export type TodaySyncBucket = keyof TodaySyncCounts;
+
+export async function getTodaySyncCounts(): Promise<TodaySyncCounts> {
+  const { data } = await api.get<TodaySyncCounts>('/api/dealers/sync-today');
+  return data;
+}
+
 export interface DealerListParams {
   active?: boolean;
   provider?: string;
@@ -117,6 +136,8 @@ export interface DealerListParams {
   ids?: string;
   /** failed | incomplete | success | never | no_vehicles */
   sync_status?: string;
+  /** running | pending | done | failed — where the dealer stands in today's sync */
+  today_sync?: TodaySyncBucket;
   added_within_days?: number;
   sort?: string;
   order?: 'asc' | 'desc';

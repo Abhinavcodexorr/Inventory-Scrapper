@@ -4,10 +4,11 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select, func, delete, or_, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from dealer_scraper.adapters.registry import _host_of as _registry_host
@@ -15,6 +16,7 @@ from dealer_scraper.adapters.registry import validate_scrape_config
 from dealer_scraper.config_lint import find_identity_conflict
 from dealer_scraper.config import settings
 from dealer_scraper.discovery.persistence import _finalize
+from dealer_scraper.normalize import start_of_local_day
 from dealer_scraper.models import (
     Car,
     CarPriceHistory,
@@ -53,6 +55,7 @@ from ..schemas import (
     SiteCompatibilityReportOut,
     SiteCompatibilitySummaryOut,
     SyncAllOut,
+    TodaySyncCounts,
     SyncCancelOut,
     SyncJobOut,
     SyncJobStatusOut,
@@ -292,6 +295,33 @@ _SYNC_FILTERS = {
 }
 
 
+def _today_sync_clauses() -> dict:
+    """The four buckets of "today's sync", as mutually exclusive SQL conditions.
+
+    "Today" starts at local midnight (the daily sync's own timezone). `last_synced_at`
+    is stamped when a run FINISHES, so a dealer mid-scrape still carries yesterday's
+    value and is told apart by an unexpired 'running' row instead. A 'running' row
+    older than sync_stale_after_seconds is an abandoned one (worker killed), and does
+    not count as in progress. In-progress wins: a dealer being re-synced is never
+    listed as done or waiting at the same time.
+    """
+    start = start_of_local_day()
+    fresh = datetime.now(timezone.utc) - timedelta(seconds=settings.sync_stale_after_seconds)
+    running = (
+        select(ScrapeRun.id)
+        .where(ScrapeRun.dealer_id == Dealer.id, ScrapeRun.status == "running", ScrapeRun.started_at >= fresh)
+        .exists()
+    )
+    synced_today = Dealer.last_synced_at >= start
+    return {
+        "running": running,
+        "pending": and_(Dealer.active.is_(True), ~running,
+                        or_(Dealer.last_synced_at.is_(None), Dealer.last_synced_at < start)),
+        "done": and_(~running, synced_today, Dealer.last_sync_status.in_(("success", "completed"))),
+        "failed": and_(~running, synced_today, Dealer.last_sync_status.in_(("failed", "incomplete"))),
+    }
+
+
 def _parse_ids(ids: str) -> list[int]:
     try:
         return [int(part) for part in ids.split(",") if part.strip()][:500]
@@ -311,6 +341,9 @@ def list_dealers(
         None, description=f"Last sync result. One of: {', '.join(_SYNC_FILTERS)}"),
     added_within_days: int | None = Query(
         None, ge=1, le=3650, description="Only dealers added in the last N days"),
+    today_sync: Literal["running", "pending", "done", "failed"] | None = Query(
+        None, description="Where the dealer stands in today's sync: running (in progress), "
+                          "pending (not synced yet today), done, or failed (failed/incomplete)"),
     sort: str = Query("name", description=f"One of: {', '.join(_DEALER_SORTS)}"),
     order: str = Query("asc", pattern="^(asc|desc)$"),
     limit: int | None = Query(None, ge=1, le=500, description="Page size. Omit for all."),
@@ -336,6 +369,8 @@ def list_dealers(
             raise HTTPException(
                 status_code=422, detail=f"sync_status must be one of: {', '.join(_SYNC_FILTERS)}")
         filters.append(_SYNC_FILTERS[sync_status])
+    if today_sync:
+        filters.append(_today_sync_clauses()[today_sync])
     if added_within_days:
         filters.append(Dealer.created_at >= datetime.now(timezone.utc) - timedelta(days=added_within_days))
     if q:
@@ -811,6 +846,18 @@ def sync_all(background: BackgroundTasks, db: Session = Depends(get_db)):
     background.add_task(_dispatch_active, targets)
     return SyncAllOut(queued=len(targets), already_running=len(running & {d.id for d in active}),
                       skipped_no_settings=sum(not d.scrape_config for d in active))
+
+
+@router.get("/sync-today", response_model=TodaySyncCounts)
+def sync_today_counts(db: Session = Depends(get_db)) -> TodaySyncCounts:
+    """How many dealerships are in progress / waiting / done / failed in today's
+    sync. One query, and the same conditions the list's `today_sync` filter uses,
+    so a count always equals the rows its filter returns."""
+    clauses = _today_sync_clauses()
+    row = db.execute(select(*[
+        func.coalesce(func.sum(case((clause, 1), else_=0)), 0).label(name) for name, clause in clauses.items()
+    ]).select_from(Dealer)).one()
+    return TodaySyncCounts(**{name: int(value) for name, value in row._mapping.items()})
 
 
 @router.get("/providers/list", response_model=list[str])

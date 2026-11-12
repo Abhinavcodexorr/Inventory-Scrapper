@@ -3,6 +3,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   getLatestRunStatuses,
   getRunStats,
+  getTodaySyncCounts,
   listDealers,
   listDealersPage,
   listRecentRuns,
@@ -36,6 +37,16 @@ export function useDealerPage(params: DealerListParams) {
     queryFn: () => listDealersPage(params),
     placeholderData: keepPreviousData,
     refetchInterval,
+  });
+}
+
+/** Today's sync counts. Polled on its own: in-progress changes minute to minute. */
+export function useTodaySyncCounts() {
+  return useQuery({
+    queryKey: ['dealers', 'sync-today'],
+    queryFn: getTodaySyncCounts,
+    refetchInterval: 15_000,
+    placeholderData: keepPreviousData,
   });
 }
 
