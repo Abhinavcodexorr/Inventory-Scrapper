@@ -179,10 +179,52 @@ def _check_runaway(run: ScrapeRun, held_active: int) -> None:
         )
 
 
+ABANDONED_RUN_ERROR = "Abandoned: the worker stopped before this run finished."
+
+
+def reap_abandoned_runs(session: Session, dealer_id: int | None = None) -> int:
+    """Close ScrapeRun rows stuck at 'running' because their worker was killed.
+
+    A row is abandoned when it is older than sync_stale_after_seconds, or when
+    the same dealer has a LATER run that already finished (a dealer never runs
+    two scrapes at once, so the older one can no longer be live). Without this
+    they sit on the Scraping Jobs page as 'running' forever. Returns how many
+    were closed.
+    """
+    now = _now()
+    cutoff = now - timedelta(seconds=settings.sync_stale_after_seconds)
+    stmt = select(ScrapeRun).where(ScrapeRun.status == "running")
+    if dealer_id is not None:
+        stmt = stmt.where(ScrapeRun.dealer_id == dealer_id)
+    closed = 0
+    for run in session.execute(stmt).scalars().all():
+        started = run.started_at
+        if started is not None and started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        stale = started is not None and started < cutoff
+        superseded = session.execute(
+            select(ScrapeRun.id).where(
+                ScrapeRun.dealer_id == run.dealer_id,
+                ScrapeRun.id > run.id,
+                ScrapeRun.status != "running",
+            ).limit(1)
+        ).first() is not None
+        if stale or superseded:
+            run.status = "failed"
+            run.finished_at = now
+            run.error = run.error or ABANDONED_RUN_ERROR
+            closed += 1
+    if closed:
+        session.commit()
+        log.warning("Closed %d abandoned scrape run(s)", closed)
+    return closed
+
+
 def run_dealer(session: Session, dealer: Dealer, adapter=None) -> ScrapeRun:
     """Scrape one dealer end-to-end and persist results. Never raises for a
     scrape/parse failure — records it on the ScrapeRun and returns so the daily
     runner can continue with other dealers."""
+    reap_abandoned_runs(session, dealer.id)
     run = ScrapeRun(dealer_id=dealer.id, status="running", started_at=_now())
     session.add(run)
     session.flush()

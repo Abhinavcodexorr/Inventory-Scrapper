@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from dealer_scraper.config import settings
 from dealer_scraper.db import SessionLocal
-from dealer_scraper.engine import run_dealer
+from dealer_scraper.engine import reap_abandoned_runs, run_dealer
 from dealer_scraper.models import Dealer
 from worker.celery_app import celery_app
 
@@ -164,6 +164,7 @@ def sync_all_dealers(self, dealer_ids: list[int] | None = None) -> dict:
     with no argument to mean "every active dealer".
     """
     with SessionLocal() as session:
+        reap_abandoned_runs(session)
         stmt = select(Dealer.id).where(Dealer.active.is_(True))
         if dealer_ids:
             stmt = stmt.where(Dealer.id.in_(dealer_ids))
