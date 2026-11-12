@@ -329,7 +329,8 @@ export function DataTable<T>({
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: 0.5,
-                          justifyContent: col.align === 'right' ? 'flex-end' : 'flex-start',
+                          justifyContent:
+                            col.align === 'right' ? 'flex-end' : col.align === 'center' ? 'center' : 'flex-start',
                           width: '100%',
                         }}
                       >

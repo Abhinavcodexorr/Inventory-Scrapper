@@ -1,4 +1,4 @@
-import { Tooltip, Typography } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 import { formatDateShort } from '../utils/format';
 import type { Vehicle } from '../types';
 
@@ -12,23 +12,21 @@ import type { Vehicle } from '../types';
 export function DaysInStock({ vehicle: v }: { vehicle: Pick<Vehicle, 'days_in_stock' | 'stock_date' | 'status'> }) {
   if (v.days_in_stock === null || v.days_in_stock === undefined) {
     return (
-      <Tooltip title="This dealer's website does not report when the vehicle went into stock">
-        <Typography variant="body2" color="text.disabled">
-          —
-        </Typography>
-      </Tooltip>
+      <Typography variant="body2" color="text.disabled">
+        —
+      </Typography>
     );
   }
-  const frozen = v.status === 'sold' || v.status === 'removed';
   return (
-    <Tooltip
-      title={`In stock since ${formatDateShort(v.stock_date)}, from the dealer's website${
-        frozen ? ` · counting stopped when it was ${v.status}` : ''
-      }`}
-    >
-      <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+    <Box sx={{ lineHeight: 1.25 }}>
+      <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
         {v.days_in_stock.toLocaleString()}
       </Typography>
-    </Tooltip>
+      {v.stock_date && (
+        <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>
+          Added since {formatDateShort(v.stock_date)}
+        </Typography>
+      )}
+    </Box>
   );
 }

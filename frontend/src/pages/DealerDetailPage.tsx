@@ -334,25 +334,30 @@ export function DealerDetailPage() {
     () => [
       {
         key: 'vehicle',
-        header: 'Vehicle',
+        header: 'Vehicle / Trim',
         minWidth: 220,
         sortable: false,
         hideable: false,
         render: (v) => (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
             <VehicleThumb />
-            <Typography variant="body2" noWrap sx={{ fontWeight: 540 }}>
-              {vehicleTitle(v)}
-            </Typography>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="body2" noWrap sx={{ fontWeight: 540 }}>
+                {vehicleTitle({ ...v, trim: null })}
+              </Typography>
+              {v.trim && (
+                <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>
+                  {v.trim}
+                </Typography>
+              )}
+            </Box>
           </Box>
         ),
       },
-      { key: 'trim', header: 'Trim', minWidth: 120, sortable: false, value: (v) => v.trim },
       {
         key: 'price',
         header: 'Price',
         width: 110,
-        align: 'right',
         sortable: false,
         value: (v) => (v.price ? Number(v.price) : null),
         render: (v) => (
@@ -365,6 +370,7 @@ export function DealerDetailPage() {
         key: 'status',
         header: 'Status',
         width: 110,
+        align: 'center',
         sortable: false,
         value: (v) => v.status,
         render: (v) => <StatusChip status={v.status} />,
@@ -373,6 +379,7 @@ export function DealerDetailPage() {
         key: 'last_seen_at',
         header: 'Last seen',
         width: 140,
+        align: 'center',
         sortable: false,
         value: (v) => v.last_seen_at,
         render: (v) => (
@@ -384,7 +391,6 @@ export function DealerDetailPage() {
       {
         key: 'days_in_stock',
         header: 'DIS',
-        hint: 'DIS: Days in Stock, as reported by the dealer\'s website',
         width: 130,
         align: 'center',
         sortable: false,
@@ -397,14 +403,13 @@ export function DealerDetailPage() {
         key: 'first_seen_at',
         header: 'Created Date',
         width: 130,
+        align: 'center',
         sortable: false,
         value: (v) => v.first_seen_at,
         render: (v) => (
-          <Tooltip title={`Added to the tool ${formatDate(v.first_seen_at)}`}>
-            <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-              {formatDateShort(v.first_seen_at)}
-            </Typography>
-          </Tooltip>
+          <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+            {formatDateShort(v.first_seen_at)}
+          </Typography>
         ),
       },
     ],

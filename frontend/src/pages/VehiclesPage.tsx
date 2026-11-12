@@ -397,7 +397,6 @@ export function VehiclesPage() {
       {
         key: 'days_in_stock',
         header: 'DIS',
-        hint: 'DIS: Days in Stock, as reported by the dealer\'s website',
         width: 130,
         align: 'center',
         value: (v) => v.days_in_stock,
