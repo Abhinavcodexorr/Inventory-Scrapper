@@ -473,7 +473,6 @@ export function DealersPage() {
           ]}
         />
         <FilterSelect label="Provider" value={provider} onChange={setProvider} width={172} options={providerOptions} />
-        <TodaySyncFilter value={todaySync} onChange={setTodaySync} />
         <FilterSelect label="Last sync" value={syncStatus} onChange={setSyncStatus} width={178} options={SYNC_OPTIONS} />
         <FilterSelect label="Added" value={added} onChange={setAdded} width={150} allLabel="Any time" options={ADDED_OPTIONS} />
         <FilterSelect
@@ -487,6 +486,10 @@ export function DealersPage() {
           required
           options={sortOptions}
         />
+        {/* Its own row under the search and filters, so the bar above keeps its layout. */}
+        <Box sx={{ width: '100%' }}>
+          <TodaySyncFilter value={todaySync} onChange={setTodaySync} />
+        </Box>
       </FilterBar>
 
       {dealersQ.isError && (
