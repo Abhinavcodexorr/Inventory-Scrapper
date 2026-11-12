@@ -5,7 +5,9 @@ from datetime import datetime, date
 from decimal import Decimal
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+
+from dealer_scraper.normalize import days_in_stock as compute_days_in_stock
 
 
 # ---------------------------------------------------------------- Dealers
@@ -357,12 +359,26 @@ class VehicleOut(BaseModel):
     updated_at: datetime | None      # Last updated — moves only when the listing changes
     removed_at: datetime | None
     sold_at: datetime | None
+    stock_date: date | None          # the dealer's own "in stock since" date; None if the site doesn't say
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def days_in_stock(self) -> int | None:
+        """Days in Stock: stock_date to today, frozen at the sold/removed date."""
+        return compute_days_in_stock(self.stock_date, self.status, self.sold_at, self.removed_at)
 
 
 class PageMeta(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class StatusCounts(BaseModel):
+    active: int
+    sold: int
+    removed: int
+    total: int
 
 
 class VehiclePage(BaseModel):

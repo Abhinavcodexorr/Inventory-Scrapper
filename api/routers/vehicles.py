@@ -1,22 +1,28 @@
 """Vehicle inventory browsing + per-vehicle history (SOW §2, §4, §5)."""
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from dealer_scraper.models import Car, CarPriceHistory, VehicleAuditLog
 from ..deps import get_db
-from ..schemas import AuditLogOut, PageMeta, PriceHistoryOut, VehicleOut, VehiclePage
+from ..schemas import AuditLogOut, PageMeta, PriceHistoryOut, StatusCounts, VehicleOut, VehiclePage
 
 router = APIRouter(prefix="/api/vehicles", tags=["vehicles"])
+
+#: The only values Car.status takes. Declared once so a typo in a query string is a
+#: 422, not a silently empty list that reads as "this dealer has no sold cars".
+CarStatus = Literal["active", "removed", "sold"]
 
 
 @router.get("", response_model=VehiclePage)
 def list_vehicles(
     db: Session = Depends(get_db),
     dealer_id: int | None = None,
-    status: str | None = Query(None, description="active | removed | sold"),
+    status: CarStatus | None = Query(None, description="active | removed | sold; omit for all"),
     make: str | None = None,
     model: str | None = None,
     year_min: int | None = None,
@@ -24,7 +30,7 @@ def list_vehicles(
     price_min: float | None = None,
     price_max: float | None = None,
     q: str | None = Query(None, description="Search make/model/trim/VIN"),
-    sort: str = Query("id", description="id | price | year | mileage | last_seen_at"),
+    sort: str = Query("id", description="id | price | year | mileage | last_seen_at | first_seen_at | days_in_stock"),
     order: str = Query("desc", description="asc | desc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
@@ -55,15 +61,44 @@ def list_vehicles(
 
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
 
-    sort_col = {"id": Car.id, "price": Car.price, "year": Car.year,
-                "mileage": Car.mileage, "last_seen_at": Car.last_seen_at}.get(sort, Car.id)
-    stmt = stmt.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
+    if sort == "days_in_stock":
+        # More days in stock = an OLDER stock_date, so the direction is inverted.
+        # Cars whose site doesn't report it go last either way, never first.
+        stmt = stmt.order_by(
+            Car.stock_date.is_(None),
+            Car.stock_date.asc() if order == "desc" else Car.stock_date.desc(),
+            Car.id.desc(),
+        )
+    else:
+        sort_col = {"id": Car.id, "price": Car.price, "year": Car.year,
+                    "mileage": Car.mileage, "last_seen_at": Car.last_seen_at,
+                    "first_seen_at": Car.first_seen_at}.get(sort, Car.id)
+        stmt = stmt.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
+
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
 
     return VehiclePage(
         meta=PageMeta(total=total, page=page, page_size=page_size),
         items=list(db.execute(stmt).scalars()),
     )
+
+
+@router.get("/status-counts", response_model=StatusCounts)
+def status_counts(db: Session = Depends(get_db), dealer_id: int | None = None) -> StatusCounts:
+    """How many vehicles are in each status, for the filter chips.
+
+    One grouped query (served by ix_cars_dealer_status) instead of one count per
+    chip, and computed on the same rows the list filters, so a chip's number always
+    equals the rows its filter returns.
+    """
+    stmt = select(Car.status, func.count()).group_by(Car.status)
+    if dealer_id is not None:
+        stmt = stmt.where(Car.dealer_id == dealer_id)
+    by_status = dict(db.execute(stmt).all())
+    active, sold, removed = (int(by_status.get(k, 0)) for k in ("active", "sold", "removed"))
+    # total is every row, so "All" stays equal to what the unfiltered list returns even
+    # if a status outside these three ever appears.
+    return StatusCounts(active=active, sold=sold, removed=removed, total=sum(by_status.values()))
 
 
 def _car_or_404(db: Session, car_id: int) -> Car:

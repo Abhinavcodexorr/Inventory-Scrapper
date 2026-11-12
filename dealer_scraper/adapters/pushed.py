@@ -12,7 +12,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Iterator
 
-from ..normalize import NormalizedVehicle
+from ..normalize import NormalizedVehicle, parse_date
 
 _FIELDS = set(NormalizedVehicle.__dataclass_fields__)
 _MONEY = ("price", "original_price")
@@ -26,6 +26,8 @@ def _to_vehicle(row: dict) -> NormalizedVehicle:
                 data[key] = Decimal(str(data[key]))
             except InvalidOperation:
                 data[key] = None
+    # Arrives as ISO text over JSON; the dataclass wants a date.
+    data["stock_date"] = parse_date(data.get("stock_date"))
     data.setdefault("external_id", None)
     return NormalizedVehicle(**data)
 

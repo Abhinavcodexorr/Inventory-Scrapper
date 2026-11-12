@@ -19,6 +19,7 @@ import dataclasses
 import json
 import os
 import sys
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -37,7 +38,11 @@ def vehicle_to_row(v) -> dict:
         if f.name in _SKIP:
             continue
         val = getattr(v, f.name)
-        row[f.name] = str(val) if isinstance(val, Decimal) else val
+        if isinstance(val, Decimal):
+            val = str(val)
+        elif isinstance(val, (date, datetime)):
+            val = val.isoformat()
+        row[f.name] = val
     return row
 
 

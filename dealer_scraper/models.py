@@ -123,6 +123,10 @@ class Car(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The date the DEALER put this vehicle in stock, from their own site (Days in
+    # Stock = today - stock_date). Unlike first_seen_at, which is when this tool
+    # first saw the car. NULL when the site does not report it.
+    stock_date: Mapped[date | None] = mapped_column(Date)
 
     dealer: Mapped["Dealer"] = relationship(back_populates="cars")
     price_history: Mapped[list["CarPriceHistory"]] = relationship(back_populates="car")

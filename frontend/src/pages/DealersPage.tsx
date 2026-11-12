@@ -62,7 +62,15 @@ import { useDebouncedValue } from '../utils/useDebouncedValue';
 import { useTokens } from '../theme/useTokens';
 import { useAppSettings } from '../theme/settings';
 import { chartSeries } from '../theme/tokens';
-import { colorForName, formatRelative, formatSeconds, initials, percent } from '../utils/format';
+import {
+  colorForName,
+  formatDate,
+  formatDateShort,
+  formatRelative,
+  formatSeconds,
+  initials,
+  percent,
+} from '../utils/format';
 import type { Dealer } from '../types';
 import { isRunSuccess } from '../utils/runStatus';
 
@@ -320,23 +328,27 @@ export function DealersPage() {
         ),
       },
       {
-        key: 'created_at',
-        header: 'Added',
-        width: 120,
-        hint: 'When this website was added',
-        value: (d) => d.created_at,
-        render: (d) => (
-          <Typography variant="body2" color="text.secondary">
-            {formatRelative(d.created_at)}
-          </Typography>
-        ),
-      },
-      {
         key: 'active',
         header: 'Status',
         width: 110,
         value: (d) => (d.active ? 'active' : 'inactive'),
         render: (d) => <StatusChip status={d.active ? 'active' : 'inactive'} />,
+      },
+      {
+        // Dealer.created_at: stamped once, when this dealership was added to the tool.
+        // Sorting reuses the server's created_at sort.
+        key: 'created_at',
+        header: 'Created Date',
+        width: 130,
+        hint: 'The date this dealership was added to the tool',
+        value: (d) => d.created_at,
+        render: (d) => (
+          <Tooltip title={`Added ${formatRelative(d.created_at)} · ${formatDate(d.created_at)}`}>
+            <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+              {formatDateShort(d.created_at)}
+            </Typography>
+          </Tooltip>
+        ),
       },
       {
         key: 'actions',

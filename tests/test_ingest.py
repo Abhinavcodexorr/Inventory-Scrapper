@@ -100,3 +100,17 @@ def test_unknown_dealer_is_404_and_no_key_is_refused() -> None:
     assert client.post("/api/dealers/99999/ingest", json={"vehicles": [_car(1)]}).status_code == 404
     anon = TestClient(client.app)
     assert anon.post("/api/dealers/1/ingest", json={"vehicles": [_car(1)]}).status_code in (401, 503)
+
+
+def main() -> None:
+    test_pushed_cars_are_saved_like_a_normal_scrape()
+    test_a_second_push_updates_prices_and_does_not_duplicate()
+    test_a_car_missing_from_a_complete_push_is_removed()
+    test_a_partial_push_does_not_remove_the_rest()
+    test_an_empty_push_is_refused_and_removes_nothing()
+    test_unknown_dealer_is_404_and_no_key_is_refused()
+    print("INGEST TESTS PASSED — a scrape pushed from another machine is handled like a local one")
+
+
+if __name__ == "__main__":
+    main()

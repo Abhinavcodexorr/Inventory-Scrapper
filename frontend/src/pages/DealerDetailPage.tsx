@@ -10,6 +10,8 @@ import {
   Skeleton,
   Tab,
   Tabs,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -34,7 +36,8 @@ import {
   syncDealer,
 } from '../api/dealers';
 import { getDealerTrend } from '../api/dashboard';
-import { listVehicles } from '../api/vehicles';
+import { DaysInStock } from '../components/DaysInStock';
+import { getVehicleStatusCounts, listVehicles } from '../api/vehicles';
 import { getErrorMessage } from '../api/client';
 import {
   AppearIn,
@@ -62,6 +65,7 @@ import {
   colorForName,
   formatAxisDate,
   formatDate,
+  formatDateShort,
   formatDuration,
   formatMoney,
   formatRelative,
@@ -82,6 +86,15 @@ const SYNC_GIVE_UP_MS = 120_000;
 const TABS = ['overview', 'inventory', 'history', 'analytics'] as const;
 type Tab = (typeof TABS)[number];
 
+/** Inventory tab filter. `all` sends no status; the others are Car.status values. */
+type InventoryStatus = 'active' | 'sold' | 'removed' | 'all';
+const INVENTORY_STATUS_OPTIONS: { value: InventoryStatus; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'sold', label: 'Sold' },
+  { value: 'removed', label: 'Removed' },
+];
+
 export function DealerDetailPage() {
   const { id } = useParams();
   const dealerId = Number(id);
@@ -94,6 +107,9 @@ export function DealerDetailPage() {
   const { enqueueSnackbar } = useSnackbar();
 
   const [tab, setTab] = useState<Tab>('overview');
+  // Default All: the tab opens on everything the dealer's site lists; Active, Sold
+  // and Removed narrow it down.
+  const [invStatus, setInvStatus] = useState<InventoryStatus>('all');
   const [invPage, setInvPage] = useState(0);
   const [invPageSize, setInvPageSize] = useState(settings.pageSize);
   const [runsPage, setRunsPage] = useState(0);
@@ -115,18 +131,28 @@ export function DealerDetailPage() {
     enabled: enabled && (tab === 'analytics' || tab === 'overview'),
   });
 
-  // Sold vehicles are kept (a dealer's site lists them with a Sold badge), so the
-  // card can reconcile "for sale" with the number the website shows.
-  const soldQ = useQuery({
-    queryKey: ['vehicles', { dealer_id: dealerId, status: 'sold', count: true }],
-    queryFn: () => listVehicles({ dealer_id: dealerId, status: 'sold', page: 1, page_size: 1 }),
-    enabled: enabled && tab === 'overview',
+  // One grouped query feeds both the overview card ("for sale / sold / listed") and
+  // the Inventory filter chips, so every number on this page comes from the same
+  // place and a chip always equals the rows its filter returns.
+  const countsQ = useQuery({
+    queryKey: ['vehicles', 'status-counts', dealerId],
+    queryFn: () => getVehicleStatusCounts(dealerId),
+    enabled: enabled && (tab === 'overview' || tab === 'inventory'),
   });
 
   const vehiclesQ = useQuery({
-    queryKey: ['vehicles', { dealer_id: dealerId, page: invPage + 1, pageSize: invPageSize }],
-    queryFn: () => listVehicles({ dealer_id: dealerId, page: invPage + 1, page_size: invPageSize }),
+    queryKey: ['vehicles', { dealer_id: dealerId, status: invStatus, page: invPage + 1, pageSize: invPageSize }],
+    queryFn: () =>
+      listVehicles({
+        dealer_id: dealerId,
+        status: invStatus === 'all' ? undefined : invStatus,
+        page: invPage + 1,
+        page_size: invPageSize,
+      }),
     enabled: enabled && tab === 'inventory',
+    // Keep the previous rows on screen while a filter/page change loads, so the
+    // table does not flash empty on every click.
+    placeholderData: (prev) => prev,
   });
 
   // A sync we just dispatched but the server has not confirmed as started yet.
@@ -355,6 +381,32 @@ export function DealerDetailPage() {
           </Typography>
         ),
       },
+      {
+        key: 'days_in_stock',
+        header: 'DIS',
+        hint: 'DIS: Days in Stock, as reported by the dealer\'s website',
+        width: 130,
+        align: 'center',
+        sortable: false,
+        value: (v) => v.days_in_stock,
+        render: (v) => <DaysInStock vehicle={v} />,
+      },
+      {
+        // first_seen_at is stamped once, when the vehicle is first added to this
+        // tool, and never changes on later syncs or when a sold car comes back.
+        key: 'first_seen_at',
+        header: 'Created Date',
+        width: 130,
+        sortable: false,
+        value: (v) => v.first_seen_at,
+        render: (v) => (
+          <Tooltip title={`Added to the tool ${formatDate(v.first_seen_at)}`}>
+            <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+              {formatDateShort(v.first_seen_at)}
+            </Typography>
+          </Tooltip>
+        ),
+      },
     ],
     [],
   );
@@ -531,8 +583,8 @@ export function DealerDetailPage() {
             icon={<DirectionsCarFilledRoundedIcon />}
             color={chartSeries[0]}
             deltaCaption={
-              soldQ.data?.meta.total
-                ? `for sale · ${soldQ.data.meta.total.toLocaleString()} sold · ${(d.inventory_count + soldQ.data.meta.total).toLocaleString()} listed`
+              countsQ.data?.sold
+                ? `for sale · ${countsQ.data.sold.toLocaleString()} sold · ${(d.inventory_count + countsQ.data.sold).toLocaleString()} listed`
                 : 'active vehicles'
             }
             onClick={() => setTab('inventory')}
@@ -629,7 +681,41 @@ export function DealerDetailPage() {
       )}
 
       {tab === 'inventory' && (
-        <SectionCard flush>
+        <>
+          <Box sx={{ mb: 1.5 }}>
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={invStatus}
+              aria-label="Filter inventory by status"
+              onChange={(_, next: InventoryStatus | null) => {
+                // An exclusive group reports null when the selected button is clicked
+                // again; ignore it so one filter is always selected.
+                if (next && next !== invStatus) {
+                  setInvStatus(next);
+                  setInvPage(0);
+                }
+              }}
+            >
+              {INVENTORY_STATUS_OPTIONS.map(({ value, label }) => {
+                const n = countsQ.data ? (value === 'all' ? countsQ.data.total : countsQ.data[value]) : null;
+                return (
+                  <ToggleButton key={value} value={value} sx={{ textTransform: 'none', px: 2, gap: 0.75 }}>
+                    {label}
+                    <Typography
+                      component="span"
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ fontVariantNumeric: 'tabular-nums' }}
+                    >
+                      {n === null ? '' : n.toLocaleString()}
+                    </Typography>
+                  </ToggleButton>
+                );
+              })}
+            </ToggleButtonGroup>
+          </Box>
+          <SectionCard flush>
           <DataTable
             rows={vehiclesQ.data?.items ?? []}
             columns={vehicleColumns}
@@ -647,19 +733,35 @@ export function DealerDetailPage() {
             pageSizeOptions={[25, 50, 100]}
             rowNoun="vehicles"
             empty={
-              <EmptyState
-                art="vehicles"
-                title="No inventory yet"
-                description="Sync this dealership to pull in its current listings."
-                action={
-                  <Button variant="contained" onClick={() => syncM.mutate()} disabled={!d.active || syncM.isPending}>
-                    Sync now
-                  </Button>
-                }
-              />
+              // A filter that matches nothing is not "no inventory": say which
+              // status is empty and offer the way out, instead of "Sync now".
+              invStatus !== 'all' && (countsQ.data?.total ?? 0) > 0 ? (
+                <EmptyState
+                  art="vehicles"
+                  title={`No ${invStatus} vehicles`}
+                  description={`This dealership has ${countsQ.data?.total.toLocaleString()} vehicles in total, none of them ${invStatus}.`}
+                  action={
+                    <Button variant="outlined" onClick={() => setInvStatus('all')}>
+                      Show all
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  art="vehicles"
+                  title="No inventory yet"
+                  description="Sync this dealership to pull in its current listings."
+                  action={
+                    <Button variant="contained" onClick={() => syncM.mutate()} disabled={!d.active || syncM.isPending}>
+                      Sync now
+                    </Button>
+                  }
+                />
+              )
             }
           />
         </SectionCard>
+        </>
       )}
 
       {tab === 'history' && (

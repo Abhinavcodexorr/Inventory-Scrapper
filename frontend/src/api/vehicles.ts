@@ -1,8 +1,16 @@
 import { api } from './client';
-import type { AuditLog, PriceHistory, Vehicle, VehicleListParams, VehiclePage } from '../types';
+import type { AuditLog, PriceHistory, Vehicle, VehicleListParams, VehiclePage, VehicleStatusCounts } from '../types';
 
 export async function listVehicles(params?: VehicleListParams): Promise<VehiclePage> {
   const { data } = await api.get<VehiclePage>('/api/vehicles', { params });
+  return data;
+}
+
+/** Vehicles per status (active / sold / removed), for one dealer or all of them. */
+export async function getVehicleStatusCounts(dealerId?: number): Promise<VehicleStatusCounts> {
+  const { data } = await api.get<VehicleStatusCounts>('/api/vehicles/status-counts', {
+    params: dealerId === undefined ? undefined : { dealer_id: dealerId },
+  });
   return data;
 }
 

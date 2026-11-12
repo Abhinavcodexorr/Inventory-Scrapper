@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 
@@ -47,6 +48,11 @@ class NormalizedVehicle:
     #: dashboard has to show them separately so a dealer's count can be matched
     #: against the feed by hand. Not part of the content hash.
     source_status_raw: str | None = None
+    #: The date the dealer put this vehicle in stock, as their own site states it
+    #: (Days in Stock = today - stock_date). Stored as a DATE rather than a day
+    #: count so it never goes stale between syncs. None when the site does not say.
+    #: Not part of the content hash: it must not register as a listing change.
+    stock_date: date | None = None
     raw_payload: dict | None = None
 
     def content_hash(self) -> str:
@@ -63,6 +69,137 @@ class NormalizedVehicle:
             self.interior_color, self.transmission, self.fuel_type, self.drivetrain,
         ))
         return hashlib.sha256(basis.encode("utf-8")).hexdigest()
+
+
+def today_local() -> date:
+    """Today's date where the dealers are (Canada), not on the server.
+
+    Sites that report "days on lot" roll their counter over at local midnight;
+    counting from the server's UTC date would shift a derived stock date by a day
+    for several hours every night.
+    """
+    from .config import settings
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo(settings.daily_sync_timezone or "UTC")).date()
+    except Exception:
+        return datetime.now(timezone.utc).date()
+
+
+def _local_tz():
+    from .config import settings
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(settings.daily_sync_timezone or "UTC")
+    except Exception:
+        return timezone.utc
+
+
+def days_in_stock(
+    stock_date: date | None,
+    status: str | None = "active",
+    sold_at: datetime | None = None,
+    removed_at: datetime | None = None,
+    today: date | None = None,
+) -> int | None:
+    """Whole days the vehicle has been in the dealer's stock, or None if unknown.
+
+    Counts to today while the car is for sale, but stops at the day it was sold or
+    removed: a car sold after 30 days must keep saying 30, not grow forever.
+    """
+    if stock_date is None:
+        return None
+    end = today or today_local()
+    stop = sold_at if status == "sold" else removed_at if status == "removed" else None
+    if stop is not None:
+        if stop.tzinfo is None:
+            stop = stop.replace(tzinfo=timezone.utc)
+        end = min(end, stop.astimezone(_local_tz()).date())
+    return max(0, (end - stock_date).days)
+
+
+#: Feed keys that hold the stock DATE, most direct first. The first one a vehicle
+#: has a parseable value for wins.
+_STOCK_DATE_KEYS = ("stock_date", "instock_date", "date_in_stock", "in_stock_date")
+#: Feed keys that hold a DAY COUNT (days in stock / on lot). Turned into a date.
+_STOCK_DAYS_KEYS = ("days_in_stock", "days_on_lot", "days_in_inventory")
+#: Provider signatures whose creation timestamp is the stock date. Each is
+#: (keys that must all be present to recognise the provider, key holding the date).
+#:   Hillz:      `instock_date` exists but is empty on every dealer checked; the row's
+#:               `createdAt` is what its own `age` counts from.
+#:   Car Pages:  `create_datetime` is when the listing was created, the closest
+#:               thing the feed offers to a stock date.
+_STOCK_DATE_SIGNATURES = (
+    (("frk_dealership_id", "createdAt"), "createdAt"),
+    (("organization", "create_datetime"), "create_datetime"),
+)
+_MIN_STOCK_YEAR = 2000
+
+
+def parse_date(value) -> date | None:
+    """A calendar date from ISO text ("2026-11-03", "2026-11-03 09:20:11",
+    "2026-10-24T18:40:59.000Z"), a date or a datetime. None for anything else."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if len(text) < 8:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _sane_stock_date(d: date | None, today: date) -> date | None:
+    """Reject a date no real listing has: before 2000, or later than tomorrow."""
+    if d is None or d.year < _MIN_STOCK_YEAR or d > today + timedelta(days=1):
+        return None
+    return d
+
+
+def stock_date_from(raw: dict, today: date | None = None) -> date | None:
+    """The vehicle's stock date from whatever the feed offers, or None.
+
+    Order: a field the dealer's config mapped explicitly (`stock_date` or
+    `days_in_stock`), then well-known keys in the raw item, then a provider's
+    creation timestamp. Sites that only give a day count are converted with the
+    dealer-local date, so the result is stable across the day.
+    """
+    today = today or today_local()
+    item = raw.get("_raw") if isinstance(raw.get("_raw"), dict) else {}
+
+    def from_date(value) -> date | None:
+        return _sane_stock_date(parse_date(value), today)
+
+    def from_days(value) -> date | None:
+        n = to_int(value)
+        if n is None or n < 0 or n > 365 * 25:
+            return None
+        return _sane_stock_date(today - timedelta(days=n), today)
+
+    for source in (raw, item):
+        for key in _STOCK_DATE_KEYS:
+            found = from_date(source.get(key))
+            if found:
+                return found
+        for key in _STOCK_DAYS_KEYS:
+            found = from_days(source.get(key))
+            if found:
+                return found
+    for needed, key in _STOCK_DATE_SIGNATURES:
+        if all(k in item for k in needed):
+            found = from_date(item.get(key))
+            if found:
+                return found
+    return None
 
 
 def _original_price(raw: dict) -> Decimal | None:
@@ -178,5 +315,6 @@ def normalize(raw: dict) -> NormalizedVehicle:
         url=_s(raw, "url", 700),
         source_status=map_source_status(raw.get("source_status")),
         source_status_raw=_s(raw, "source_status", 40),
+        stock_date=stock_date_from(raw),
         raw_payload=raw.get("_raw"),
     )

@@ -195,6 +195,10 @@ export interface Vehicle {
   updated_at: string | null;
   removed_at: string | null;
   sold_at: string | null;
+  /** The date the dealer's website says the vehicle went into stock; null if it does not say. */
+  stock_date: string | null;
+  /** Days in Stock: stock_date to today (stopping at the sold/removed date); null if unknown. */
+  days_in_stock: number | null;
 }
 
 export interface PageMeta {
@@ -349,6 +353,13 @@ export interface Snapshot {
   sold: number;
   price_changed: number;
   sync_status: string;
+}
+
+export interface VehicleStatusCounts {
+  active: number;
+  sold: number;
+  removed: number;
+  total: number;
 }
 
 export interface VehicleListParams {

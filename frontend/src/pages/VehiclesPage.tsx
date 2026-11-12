@@ -43,12 +43,13 @@ import { DealerFilter } from '../components/DealerFilter';
 import { useDebouncedValue } from '../utils/useDebouncedValue';
 import { useAppSettings } from '../theme/settings';
 import { useTokens } from '../theme/useTokens';
+import { DaysInStock } from '../components/DaysInStock';
 import { downloadCsv, stampedFilename } from '../utils/csv';
-import { formatDate, formatMoney, formatRelative, vehicleTitle } from '../utils/format';
+import { formatDate, formatDateShort, formatMoney, formatRelative, vehicleTitle } from '../utils/format';
 import type { Vehicle } from '../types';
 
 /** Sort keys the API actually understands — everything else falls back to id. */
-const SERVER_SORTABLE = new Set(['id', 'price', 'year', 'mileage', 'last_seen_at']);
+const SERVER_SORTABLE = new Set(['id', 'price', 'year', 'mileage', 'last_seen_at', 'first_seen_at', 'days_in_stock']);
 
 interface FilterState {
   search: string;
@@ -229,7 +230,9 @@ export function VehiclesPage() {
       { header: 'Body type', value: (v) => v.body_type },
       { header: 'Status', value: (v) => v.status },
       { header: 'Discount from', value: (v) => v.original_price },
-      { header: 'Created', value: (v) => v.first_seen_at },
+      { header: 'DIS', value: (v) => v.days_in_stock },
+      { header: 'In stock since', value: (v) => v.stock_date },
+      { header: 'Created Date', value: (v) => v.first_seen_at },
       { header: 'Last checked', value: (v) => v.last_seen_at },
       { header: 'Last updated', value: (v) => v.updated_at },
       { header: 'URL', value: (v) => v.url },
@@ -387,6 +390,30 @@ export function VehiclesPage() {
               color={v.updated_at ? 'text.secondary' : 'text.disabled'}
             >
               {v.updated_at ? formatRelative(v.updated_at) : '—'}
+            </Typography>
+          </Tooltip>
+        ),
+      },
+      {
+        key: 'days_in_stock',
+        header: 'DIS',
+        hint: 'DIS: Days in Stock, as reported by the dealer\'s website',
+        width: 130,
+        align: 'center',
+        value: (v) => v.days_in_stock,
+        render: (v) => <DaysInStock vehicle={v} />,
+      },
+      {
+        // Last column. first_seen_at is stamped once, when the vehicle is first added
+        // to this tool, and never changes on later syncs or when a sold car returns.
+        key: 'first_seen_at',
+        header: 'Created Date',
+        width: 130,
+        value: (v) => v.first_seen_at,
+        render: (v) => (
+          <Tooltip title={`Added to the tool ${formatDate(v.first_seen_at)}`}>
+            <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+              {formatDateShort(v.first_seen_at)}
             </Typography>
           </Tooltip>
         ),

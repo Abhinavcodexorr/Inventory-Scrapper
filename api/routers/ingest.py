@@ -49,6 +49,7 @@ class PushedVehicle(BaseModel):
     url: str | None = None
     source_status: str | None = None
     source_status_raw: str | None = None
+    stock_date: str | None = None    # ISO date; see NormalizedVehicle.stock_date
 
 
 class IngestIn(BaseModel):

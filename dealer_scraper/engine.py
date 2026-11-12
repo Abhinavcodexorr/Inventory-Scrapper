@@ -78,6 +78,23 @@ def _apply_fields(car: Car, v) -> None:
         setattr(car, f, getattr(v, f))
 
 
+#: A new stock date replaces a stored one only when they differ by at least this
+#: many days. Sites that report a day count give a date that can wobble by one day
+#: around midnight; a real correction is larger than that.
+_STOCK_DATE_TOLERANCE_DAYS = 2
+
+
+def _refresh_stock_date(car: Car, v) -> None:
+    """Keep cars.stock_date current on every sighting, without touching
+    `updated_at`: the date is not a listing change, and the content-hash path
+    that runs _apply_fields only fires when price/specs move."""
+    new = v.stock_date
+    if new is None:
+        return
+    if car.stock_date is None or abs((new - car.stock_date).days) >= _STOCK_DATE_TOLERANCE_DAYS:
+        car.stock_date = new
+
+
 # --------------------------------------------------------------- identity
 def _vin_key(vin: str | None) -> str | None:
     """VINs are compared case/whitespace-insensitively; blanks never match.
@@ -260,6 +277,7 @@ def run_dealer(session: Session, dealer: Dealer, adapter=None) -> ScrapeRun:
                         updated_at=_now(),
                     )
                     _apply_fields(car, v)
+                    _refresh_stock_date(car, v)
                     car.raw_payload = v.raw_payload
                     session.add(car)
                     session.flush()  # obtain car.id for FKs
@@ -324,6 +342,8 @@ def run_dealer(session: Session, dealer: Dealer, adapter=None) -> ScrapeRun:
                                note=f"external_id {car.external_id} -> {v.external_id}")
                         car.external_id = v.external_id
                         index.by_ext.setdefault(v.external_id, car)
+
+                _refresh_stock_date(car, v)
 
                 if car.content_hash != h:
                     _apply_fields(car, v)

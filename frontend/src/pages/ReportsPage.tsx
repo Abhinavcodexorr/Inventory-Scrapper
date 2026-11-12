@@ -101,6 +101,7 @@ export function ReportsPage() {
       { header: 'Currency', value: (v) => v.currency },
       { header: 'Mileage', value: (v) => v.mileage },
       { header: 'Status', value: (v) => v.status },
+      { header: 'DIS', value: (v) => v.days_in_stock },
       { header: 'First seen', value: (v) => v.first_seen_at },
       { header: 'Last seen', value: (v) => v.last_seen_at },
       { header: 'URL', value: (v) => v.url },

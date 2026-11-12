@@ -35,6 +35,7 @@ import { useTokens } from '../theme/useTokens';
 import {
   fieldOrPending,
   formatDate,
+  formatDateShort,
   formatMoney,
   formatMoneyCompact,
   formatRelative,
@@ -184,6 +185,16 @@ export function VehicleDetailPage() {
   ];
 
   const scrapeMeta: KeyValueItem[] = [
+    {
+      label: 'Days in stock',
+      value: v.days_in_stock === null ? 'Not reported by the website' : `${v.days_in_stock.toLocaleString()} days`,
+      muted: v.days_in_stock === null,
+    },
+    {
+      label: 'In stock since',
+      value: v.stock_date ? formatDateShort(v.stock_date) : '—',
+      muted: !v.stock_date,
+    },
     { label: 'Created', value: formatDate(v.first_seen_at) },
     // Two different questions: is the data fresh, and did the listing change.
     { label: 'Last checked', value: formatDate(v.last_seen_at) },
